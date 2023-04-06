@@ -24,47 +24,46 @@ class EquilibriumModel(eqx.Module):
         The XYZ coordinates of the start nodes of the trails in a topology diagram.
     loads: `jnp.array`
         The XYZ components of the point loads applied to the nodes of a topology diagram.
-    states: `jnp.array`
-        The combinatorial force state of the edges of a topology diagram (tension or compression).
     forces: `jnp.array`
-        The absolute magnitude of the deviation edges of a topology diagram.
+        The signed magnitude of the deviation edges of a topology diagram.
     planes: `jnp.array`
         The projection planes of trail edges of a topology diagram.
     """
-    xyz: jnp.array  # N x 3 or A x 3?
-    loads : jnp.array  # N x 3
-    states : jnp.array  # M x 1 (static)
-    forces : jnp.array  # M x 1  or C x 1?
-    planes  : jnp.array  # (static! for the time being!)
+    xyz: jax.Array  # N x 3 or A x 3?
+    loads: jax.Array  # N x 3
+    lengths: jax.Array  # N x 6?
+    planes: jax.Array  # N x 6?
+    forces: jax.Array  # M x 1  or C x 1?
+
+    def __init__(self, xyz, loads, lengths, planes, forces):
+        self.xyz = xyz
+        self.loads = loads
+        self.lengths = lengths
+        self.planes = planes
+        self.forces = forces
 
     @classmethod
     def from_topology_diagram(cls, topology):
         """
         Create an equilibrium model from a COMPAS CEM topology diagram.
+
+        Parameters
+        ----------
+        topology : `compas_cem.diagrams.TopologyDiagram`
+            A valid topology diagram.
         """
-        loads = jnp.asarray([topology.node_load(node) for node in topology.nodes()])
-        xyz = jnp.asarray([topology.node_coordinates(node) for node in topology.nodes()])
-        forces = jnp.reshape(jnp.asarray([topology.edge_force(edge) for edge in topology.edges()]), (-1, 1))
-        lengths = jnp.reshape(jnp.asarray([topology.edge_length_2(edge) for edge in topology.edges()]), (-1, 1))
+        return model_from_topology(cls, topology)
 
-        # TODO: find a way to treat edge lengths per edge, not per node
-        lengths = np.zeros((topology.number_of_nodes(), 1))
-        edges = list(topology.edges())
-        for trail in topology.trails():
-            for u, v in pairwise(trail):
-                edge = (u, v)
-                if edge not in edges:
-                    edge = (v, u)
-                lengths[u, :] = topology.edge_length_2(edge)
-        lengths = jnp.asarray(lengths)
-
-        return cls(xyz, lengths, forces, loads)
-
-    def __call__(self, topology):
+    def __call__(self, topology, *args, **kwargs):
         """
-        Compute an equilibrium state.
+        Compute an equilibrium state on a structure given a topology diagram.
 
         The computation follows the combinatorial equilibrium modeling (CEM) form-finding algorithm.
+
+        Parameters
+        ----------
+        topology : `jax_cem.equilibrium.EquilibriumStructure`
+            A structure.
 
         Returns
         -------
@@ -73,54 +72,81 @@ class EquilibriumModel(eqx.Module):
 
         Assumptions
         -----------
-        - No indirect deviation edges exist.
-        - No shape-dependent loads exist.
+        - No indirect deviation edges exist in the structure.
+        - No shape-dependent loads are applied to the structure.
         """
-        xyz = jnp.zeros((topology.number_of_nodes(), 3))
-        # forces = jnp.zeros((topology.number_of_edges(), 1))
-        residuals = jnp.zeros((topology.number_of_trails(), 3))
 
         # for t in range(kmax)...
-        sequence_start= topology.sequences[0, :]
-        xyz_seq = self.xyz[sequence_start, :]
 
-        residuals_sequence = []
-        # residuals_sequence = jnp.zeros((topology.number_of_sequences() - 1, topology.number_of_trails()))
+        xyz = jnp.zeros((topology.number_of_nodes() + 1, 3))
+        xyz_seq = self.xyz[topology.origin_nodes, :]
+        forces = jnp.where(self.forces != 0., self.forces, 0.0)
+        residuals = jnp.zeros((topology.number_of_trails(), 3))
+
+        residuals_sequences = []
+        lengths_sequences = []
 
         for i, sequence in enumerate(topology.sequences):
 
-            # update position matrix
+            # print()
+            # print("i", i)
+            # print("sequence")
+            # print(sequence)
+
+            # padding mask
+            is_sequence_padded = np.reshape(sequence, (-1, 1)) < 0
+
+            # # update position matrix
+            # # xyz = xyz.at[sequence[np.nonzero(is_sequence_padded)], :].set(xyz_seq)
             xyz = xyz.at[sequence, :].set(xyz_seq)
+            # print("updated xyz")
+            # print(xyz)
 
-            residuals = self.nodes_equilibrium(topology,
-                                               sequence,
-                                               xyz,
-                                               residuals)
+            # node residuals
+            residuals_new = self.nodes_equilibrium(topology, sequence, xyz[:-1], residuals)
+            residuals = jnp.where(is_sequence_padded, residuals, residuals_new)
+            residuals_sequences.append(residuals)
 
-            residuals_sequence.append(residuals)
+            # print("residuals")
+            # print(residuals)
 
             # trail edge lengths
-            lengths = self.nodes_length(topology, sequence, xyz_seq, residuals)
+            lengths_plane = self.nodes_length_plane(topology, sequence, xyz_seq, residuals)
+            lengths_signed = self.lengths[sequence].ravel()
+            lengths = jnp.where(lengths_signed != 0., lengths_signed, lengths_plane)
+            lengths_sequences.append(lengths)
 
-            # next position
-            xyz_seq = self.nodes_position(xyz_seq, residuals, lengths)
+            # print("lengths")
+            # print(lengths)
 
-        # trail edges force
-        # (M x 1) ordering based on raveled sequences
-        # trail_forces = self.trail_forces(residuals)
-        # trail_sequence = topology.sequence_trail_index(sequence)
-        # forces = forces.at[trail_sequence, :].set(trail_forces)
+            # next node position
+            xyz_seq_new = self.nodes_position(xyz_seq, residuals, lengths)
+            xyz_seq = jnp.where(is_sequence_padded, xyz_seq, xyz_seq_new)
+            # print("xyz seq")
+            # print(xyz_seq)
+
+        # raise ValueError("end of the journey")
+
+        # node coordinates
+        xyz = xyz[:-1]
+
+        # reaction forces
+        reactions = jnp.zeros((topology.number_of_nodes(), 3))
+        reactions = reactions.at[sequence, :].set(residuals)
 
         # edge forces
-        # TODO: combine trail and deviation edge forces
-        # forces = self.edges_forces()
+        forces = self.edges_force(topology,
+                                  residuals_sequences[:-1],
+                                  lengths_sequences[:-1],
+                                  forces)
 
         # edge lengths
         lengths = self.edges_length(topology, xyz)
 
         return EquilibriumState(xyz=xyz,
-                                reaction_forces=residuals,
+                                reactions=reactions,
                                 lengths=lengths,
+                                loads=self.loads,
                                 forces=forces)
 
     # ------------------------------------------------------------------------------
@@ -147,27 +173,21 @@ class EquilibriumModel(eqx.Module):
         """
         Calculate static equilibrium at one node of a topology diagram. Vectorized.
         """
+        node_equilibrium_vmap = vmap(self.node_equilibrium, in_axes=(None, 0, 0, None))
         vectors = self.edges_vector(xyz, topology.connectivity)
         vectors = vmap(vector_normalized)(vectors)
 
-        node_equilibrium_vmap = vmap(self.node_equilibrium, in_axes=(None, 0, None, 0, None, None))
+        return node_equilibrium_vmap(topology, sequence, residuals, vectors)
 
-        return node_equilibrium_vmap(topology, sequence, xyz, residuals, vectors)
-
-    def node_equilibrium(self, topology, index, xyz, residual, vectors):
+    def node_equilibrium(self, topology, index, residual, vectors):
         """
         Calculate static equilibrium at one node of a topology diagram.
         """
-        # data prep work
-        position = xyz[index, :]
         load = self.loads[index, :]
-        length = self.lengths[index, :]
+        incidence = topology.incidence[:, index] * topology.deviation_edges
+        forces = jnp.ravel(self.forces) * incidence
 
-        incidence = topology.incidence_signed[:, index]
-        incidence = np.reshape(incidence, (-1, 1))  # NOTE: can we not reshape?
-
-        deviation = self.deviation_vector(self.forces, vectors, incidence)
-        deviation = deviation.flatten()  # NOTE: can we not flatten?
+        deviation = self.deviation_vector(forces, vectors)
 
         return self.residual_vector(residual, deviation, load)
 
@@ -175,15 +195,15 @@ class EquilibriumModel(eqx.Module):
     # Node lengths
     # ------------------------------------------------------------------------------
 
-    def nodes_length(self, topology, sequence, xyz_seq, residuals):
+    def nodes_length_plane(self, topology, sequence, xyz_seq, residuals):
         """
         Calculate the outgoing edge lengths in a sequence of a topology diagram. Vectorized.
         """
-        node_length_vmap = vmap(self.node_length, in_axes=(None, 0, 0, 0))
+        node_length_plane_vmap = vmap(self.node_length_plane, in_axes=(None, 0, 0, 0))
 
-        return node_length_vmap(topology, sequence, xyz_seq, residuals)
+        return node_length_plane_vmap(topology, sequence, xyz_seq, residuals)
 
-    def node_length(self, topology, index, xyz, residual):
+    def node_length_plane(self, topology, index, xyz, residual):
         """
         Compute the outgoing length from a node.
 
@@ -191,19 +211,23 @@ class EquilibriumModel(eqx.Module):
         -----
         It assumes that the residual vector and plane normal vector are not parallel.
         """
-        incidence_node = topology.incidence[:, index]
-        incidence_node = np.abs(np.reshape(incidence, (-1, 1)))  # NOTE: can we not reshape?
-        mask = incidence_node * topology.trail_edges * topology.mask_trailedges_out
+        plane = self.planes[index, :]
+        origin = plane[:3]
+        normal = plane[3:]
 
-        plane = self.planes @ mask
-        origin = plane[:, 3]
-        normal = plane[3, :]
+        # return zero cos nop if plane normal is zero
+        # may raise nans, use double where trick
+        is_zero_normal = jnp.allclose(normal, 0.)
+        normal = jnp.where(is_zero_normal, jnp.ones_like(normal), normal)
+        cos_nop = jnp.where(is_zero_normal, 0., normal @ (origin - xyz))
 
-        cos_nr = normal @ vector_normalized(residual)
-        op = origin - point
-        cos_nop = normal @ op
+        # return zero length if residual is zero
+        # may raise nans, use double where trick
+        is_zero_res = jnp.allclose(residual, 0.)
+        residual = jnp.where(is_zero_res, jnp.ones_like(residual), residual)
+        length = jnp.where(is_zero_res, 0.0, cos_nop / (normal @ vector_normalized(residual)))
 
-        return cos_nop / cos_nr
+        return length
 
     # ------------------------------------------------------------------------------
     # Edge lengths
@@ -214,31 +238,57 @@ class EquilibriumModel(eqx.Module):
         The length of the edges in a topology diagram.
         """
         vectors = self.edges_vector(xyz, topology.connectivity)
-        return vector_length(edge_vectors)
+
+        return vector_length(vectors)
 
     # ------------------------------------------------------------------------------
     # Edge forces
     # ------------------------------------------------------------------------------
 
+    def edges_force(self, topology, residuals, lengths, forces):
+        """
+        The forces in the edges in a topology diagram.
+        """
+        trail_forces = self.trails_force(residuals, lengths)
+
+        sequences_edges = topology.sequences_edges
+
+        return forces.at[sequences_edges.ravel(), :].set(trail_forces)
+
+    def trails_force(self, residuals, lengths):
+        """
+        The force in the trail edges of a topology diagram.
+        """
+        residuals = jnp.concatenate(residuals)
+        lengths = jnp.reshape(jnp.concatenate(lengths), (-1, 1))
+        forces = self.trail_force(residuals)
+
+        return jnp.copysign(forces, lengths)
 
     # ------------------------------------------------------------------------------
     # Static operations
     # ------------------------------------------------------------------------------
 
     @staticmethod
-    def deviation_vector(deviation_forces, vectors, incidence):
+    def deviation_vector(forces, vectors):
         """
         Calculate the resultant deviation vector incoming to a node.
         """
-        incident_forces = incidence * deviation_forces * states # (num edges, num nodes seq)
-        return incident_forces.T @ vectors
+        return forces.T @ vectors
 
     @staticmethod
     def trail_length(trail_lengths, incidence):
         """
         Get the length of the next trail edge outgoing from a node.
         """
-        incident_length = incidence * trail_lengths  # (num_edges, num_nodes)
+        return incidence * trail_lengths  # (num_edges, num_nodes)
+
+    @staticmethod
+    def trail_force(residual):
+        """
+        The force passing through a trail edge.
+        """
+        return vector_length(residual)
 
     @staticmethod
     def residual_vector(residual, deviation, load):
@@ -255,13 +305,6 @@ class EquilibriumModel(eqx.Module):
         return position + trail_length * vector_normalized(residual)
 
     @staticmethod
-    def trails_force(residual):
-        """
-        The force passing through a trail edge.
-        """
-        return vector_length(residual)
-
-    @staticmethod
     def edges_vector(xyz, connectivity):
         """
         The edge vectors of the graph.
@@ -269,6 +312,58 @@ class EquilibriumModel(eqx.Module):
         return connectivity @ xyz
 
 
+# ------------------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------------------
+
+def model_from_topology(cls, topology):
+    """
+    Create an equilibrium model from a COMPAS CEM topology diagram.
+
+    Parameters
+    ----------
+    topology : `compas_cem.diagrams.TopologyDiagram`
+        A valid topology diagram.
+    """
+
+    nodes = sorted(list(topology.nodes()))
+    edges = list(topology.edges())
+
+    loads = jnp.asarray([topology.node_load(node) for node in nodes])
+    xyz = jnp.asarray([topology.node_coordinates(node) for node in nodes])
+
+    forces = jnp.asarray([topology.edge_force(edge) for edge in edges])
+    forces = jnp.reshape(forces, (-1, 1))
+
+    # TODO: find a way to treat edge lengths or planes per edge, not per node
+    lengths = np.zeros((topology.number_of_nodes(), 1))
+    planes = np.zeros((topology.number_of_nodes(), 6))
+
+    edges = list(topology.edges())
+    for trail in topology.trails():
+        for u, v in pairwise(trail):
+            edge = (u, v)
+            if edge not in edges:
+                edge = (v, u)
+            plane = topology.edge_plane(edge)
+            if plane is not None:
+                origin, normal = plane
+                planes[u, :] = origin + normal
+            else:
+                length = topology.edge_length_2(edge)
+                if not length:
+                    raise ValueError(f"No length defined on edge {edge}")
+                lengths[u, :] = length
+
+    planes = jnp.asarray(planes)
+    lengths = jnp.asarray(lengths)
+
+    return cls(xyz=xyz,
+               loads=loads,
+               lengths=lengths,
+               planes=planes,
+               forces=forces)
+
+
 if __name__ == "__main__":
-    # eqstate = model(topology)
     pass
