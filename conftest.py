@@ -4,6 +4,15 @@ import jax_cem
 import math
 import numpy
 
+from math import sqrt
+
+from compas_cem.diagrams import TopologyDiagram
+from compas_cem.elements import Node
+from compas_cem.elements import TrailEdge
+from compas_cem.elements import DeviationEdge
+from compas_cem.loads import NodeLoad
+from compas_cem.supports import NodeSupport
+
 
 def pytest_ignore_collect(path):
     if "rhino" in str(path):
@@ -15,6 +24,10 @@ def pytest_ignore_collect(path):
     if "ghpython" in str(path):
         return True
 
+
+# ==============================================================================
+# Fixtures
+# ==============================================================================
 
 @pytest.fixture(autouse=True)
 def add_compas(doctest_namespace):
@@ -34,24 +47,6 @@ def add_math(doctest_namespace):
 @pytest.fixture(autouse=True)
 def add_np(doctest_namespace):
     doctest_namespace["np"] = numpy
-
-
-# ==============================================================================
-# Fixtures
-# ==============================================================================
-
-from math import sqrt
-
-import pytest
-
-from compas.geometry import Plane
-
-from compas_cem.diagrams import TopologyDiagram
-from compas_cem.elements import Node
-from compas_cem.elements import TrailEdge
-from compas_cem.elements import DeviationEdge
-from compas_cem.loads import NodeLoad
-from compas_cem.supports import NodeSupport
 
 
 @pytest.fixture
