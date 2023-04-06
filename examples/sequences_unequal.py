@@ -40,24 +40,25 @@ plot = True
 # Data
 # -------------------------------------------------------------------------------
 
-points = [(0, [1.0, 0.0, 0.0]),
-          (1, [1.0, -1.0, 0.0]),
-          (2, [1.0, -2.0, 0.0]),
-          (3, [1.0, -3.0, 0.0]),
-          (4, [2.0, 0.0, 0.0]),
-          (5, [2.0, -1.0, 0.0]),
-          (6, [2.0, -2.0, 0.0]),
-          (7, [2.0, -3.0, 0.0])]
+points = [
+    (0, [1.0, 0.0, 0.0]),
+    (1, [1.0, -1.0, 0.0]),
+    (2, [1.0, -2.0, 0.0]),
+    (3, [1.0, -3.0, 0.0]),
+    (4, [2.0, 0.0, 0.0]),
+    (5, [2.0, -1.0, 0.0]),
+    (6, [2.0, -2.0, 0.0]),
+    (7, [2.0, -3.0, 0.0]),
+]
 
 # key: plane
-trail_edges = {(0, 1): ([0.0, -1.0, 0.0], [0.0, -1.0, 0.0]),
-               (1, 2): ([0.0, -2.0, 0.0], [0.0, -1.0, 0.0]),
-               (2, 3): ([0.0, -3.0, 0.0], [0.0, -1.0, 0.0])}
+trail_edges = {
+    (0, 1): ([0.0, -1.0, 0.0], [0.0, -1.0, 0.0]),
+    (1, 2): ([0.0, -2.0, 0.0], [0.0, -1.0, 0.0]),
+    (2, 3): ([0.0, -3.0, 0.0], [0.0, -1.0, 0.0]),
+}
 
-deviation_edges = [(0, 4),
-                   (1, 5),
-                   (2, 6),
-                   (3, 7)]
+deviation_edges = [(0, 4), (1, 5), (2, 6), (3, 7)]
 
 length = -1.0
 force = -2.0
@@ -181,11 +182,7 @@ if plot:
     plotter = Plotter(figsize=(12, 8))
 
     # add topology diagram to scene
-    artist = plotter.add(topology,
-                         nodesize=0.2,
-                         nodetext="sequence",
-                         nodecolor="sequence",
-                         show_nodetext=True)
+    artist = plotter.add(topology, nodesize=0.2, nodetext="sequence", nodecolor="sequence", show_nodetext=True)
 
     # add shifted form diagram to the scene
     form = form.transformed(Translation.from_vector([0.0, -5.0, 0.0]))

@@ -38,22 +38,24 @@ plot = False
 # Data
 # -------------------------------------------------------------------------------
 
-points = [(0, [1.0, 0.0, 0.0]),
-          (1, [1.0, 1.0, 0.0]),
-          (2, [1.0, 2.0, 0.0]),
-          (3, [2.0, 0.0, 0.0]),
-          (4, [2.0, 1.0, 0.0]),
-          (5, [2.0, 2.0, 0.0])]
+points = [
+    (0, [1.0, 0.0, 0.0]),
+    (1, [1.0, 1.0, 0.0]),
+    (2, [1.0, 2.0, 0.0]),
+    (3, [2.0, 0.0, 0.0]),
+    (4, [2.0, 1.0, 0.0]),
+    (5, [2.0, 2.0, 0.0]),
+]
 
 # key: plane
-trail_edges = {(0, 1): ([0.0, -1.5, 0.0], [0.0, -1.0, 0.0]),
-               (1, 2): ([0.0, -3.0, 0.0], [0.0, -1.0, 0.0]),
-               (3, 4): ([0.0, -1.5, 0.0], [0.0, -1.0, 0.0]),
-               (4, 5): ([0.0, -3.0, 0.0], [0.0, -1.0, 0.0])}
+trail_edges = {
+    (0, 1): ([0.0, -1.5, 0.0], [0.0, -1.0, 0.0]),
+    (1, 2): ([0.0, -3.0, 0.0], [0.0, -1.0, 0.0]),
+    (3, 4): ([0.0, -1.5, 0.0], [0.0, -1.0, 0.0]),
+    (4, 5): ([0.0, -3.0, 0.0], [0.0, -1.0, 0.0]),
+}
 
-deviation_edges = [(0, 3),
-                   (1, 4),
-                   (2, 5)]
+deviation_edges = [(0, 3), (1, 4), (2, 5)]
 
 length = -1.0
 force = -1.0
@@ -137,11 +139,13 @@ y = jnp.array([[-1.5, -1.5, 0.0], [4.5, -1.5, 0.0]])  # 1, 4
 
 print(structure.edges)
 
+
 # @jax.jit
 def loss_fn(model, structure, y):
     eqstate = model(structure)
     pred_y = eqstate.xyz[nodes, :]
     return jnp.sum((y - pred_y) ** 2)
+
 
 loss = loss_fn(model, structure, y)
 print(f"{loss=}")
@@ -160,12 +164,14 @@ filter_spec = eqx.tree_at(
     replace=(True),
 )
 
+
 @eqx.filter_jit
 def loss_fn(diff_model, static_model, structure, y):
     model = eqx.combine(diff_model, static_model)
     eqstate = model(structure)
     pred_y = eqstate.xyz[nodes, :]
     return jnp.sum((y - pred_y) ** 2)
+
 
 @eqx.filter_value_and_grad
 def loss_and_grad_fn(diff_model, static_model, structure, y):
@@ -198,7 +204,7 @@ print("\noptimizing with lbfgsb")
 optimizer = jaxopt.LBFGS
 # fn = loss_fn
 fn = loss_and_grad_fn
-opt = optimizer(fn, maxiter=100, tol=1e-6, value_and_grad=True, jit=False, unroll=True) # unroll=True)
+opt = optimizer(fn, maxiter=100, tol=1e-6, value_and_grad=True, jit=False, unroll=True)  # unroll=True)
 
 print("\noptimizing with run")
 opt_result = opt.run(diff_model, static_model, structure, y)
@@ -246,12 +252,7 @@ if plot:
     plotter = Plotter()
 
     # add topology diagram to scene
-    artist = plotter.add(topology,
-                         nodesize=0.2,
-                         nodetext="key",
-                         nodecolor="sequence",
-                         show_nodetext=True)
-
+    artist = plotter.add(topology, nodesize=0.2, nodetext="key", nodecolor="sequence", show_nodetext=True)
 
     # add shifted form diagram to the scene
     form = form.transformed(Translation.from_vector([0.0, -1.0, 0.0]))

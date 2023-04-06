@@ -21,10 +21,12 @@ __all__ = ["EquilibriumStructure"]
 # Helpers
 # ------------------------------------------------------------------------------
 
+
 class EquilibriumStructure(eqx.Module):
     """
     The attributed, undirected graph describing a pin-jointed bar structure.
     """
+
     nodes: jax.Array  # nodes
     edges: jax.Array  # pairs of nodes
     origin_nodes: jax.Array  # nodes
@@ -58,9 +60,9 @@ class EquilibriumStructure(eqx.Module):
             edge_indices = np.nonzero(self.connectivity[:, node])
             connected_edges = self.edges[edge_indices]
             for i, edge in zip(np.reshape(edge_indices, (-1, 1)), connected_edges):
-                val = 1.
+                val = 1.0
                 if edge[0] != node:
-                    val = -1.
+                    val = -1.0
                 incidence[i, node] = val
 
         return jnp.asarray(incidence)
@@ -117,7 +119,12 @@ class EquilibriumStructure(eqx.Module):
 # Helpers
 # ------------------------------------------------------------------------------
 
+
 class EquilibriumStructureFrozen(eqx.Module):
+    """
+    An immutable version of an equilibrium structure.
+    """
+
     nodes: jnp.array
     edges: jnp.array
     origin_nodes: jnp.array
@@ -158,6 +165,7 @@ class EquilibriumStructure2:
     """
     The attributed, undirected graph describing a pin-jointed bar structure.
     """
+
     nodes: np.array  # nodes
     edges: np.array  # pairs of nodes
     origin_nodes: np.array  # nodes
@@ -199,14 +207,11 @@ class EquilibriumStructure2:
                 edge_indices = np.nonzero(self.connectivity[:, node])
                 connected_edges = self.edges[edge_indices]
                 for i, edge in zip(np.reshape(edge_indices, (-1, 1)), connected_edges):
-                    val = 1.
+                    val = 1.0
                     if edge[0] != node:
-                        val = -1.
+                        val = -1.0
                     incidence[i, node] = val
 
-                # mask = connected_edges[:, 0] == node
-                # values = np.where( == 1, -1 )
-                # incidence[:, node] = values
             self._incidence = jnp.asarray(incidence)
 
         return self._incidence
@@ -219,8 +224,7 @@ class EquilibriumStructure2:
                 sequence = []
                 for edge in zip(*sequences_pair):
                     edge = tuple(edge)
-                    index = self.edge_index.get(edge,
-                                                self.edge_index.get((edge[1], edge[0]), -1))
+                    index = self.edge_index.get(edge, self.edge_index.get((edge[1], edge[0]), -1))
                     sequence.append(index)
                 sequences.append(sequence)
             self._sequences_edges = jnp.asarray(sequences)
@@ -267,6 +271,7 @@ class EquilibriumStructure2:
 # Helpers
 # ------------------------------------------------------------------------------
 
+
 def frozen_structure(structure):
     """
     Return an immutable version of a structure.
@@ -281,24 +286,17 @@ def frozen_structure(structure):
     structure : `jax_cem.equilibrium.EquilibriumStructureFrozen`
         A frozen structure.
     """
-    # return EquilibriumStructureFrozen(nodes=jnp.asarray(structure.nodes),
-    #                                   edges=jnp.asarray(structure.edges),
-    #                                   trail_edges=jnp.asarray(structure.trail_edges),
-    #                                   deviation_edges=jnp.asarray(structure.deviation_edges),
-    #                                   sequences=jnp.asarray(structure.sequences),
-    #                                   sequences_edges=structure.sequences_edges,
-    #                                   connectivity=structure.connectivity,
-    #                                   incidence=structure.incidence)
-
-    return EquilibriumStructureFrozen(nodes=structure.nodes,
-                                      edges=structure.edges,
-                                      origin_nodes=structure.origin_nodes,
-                                      trail_edges=structure.trail_edges,
-                                      deviation_edges=structure.deviation_edges,
-                                      sequences=structure.sequences,
-                                      sequences_edges=structure.sequences_edges,
-                                      connectivity=structure.connectivity,
-                                      incidence=structure.incidence)
+    return EquilibriumStructureFrozen(
+        nodes=structure.nodes,
+        edges=structure.edges,
+        origin_nodes=structure.origin_nodes,
+        trail_edges=structure.trail_edges,
+        deviation_edges=structure.deviation_edges,
+        sequences=structure.sequences,
+        sequences_edges=structure.sequences_edges,
+        connectivity=structure.connectivity,
+        incidence=structure.incidence,
+    )
 
 
 def structure_from_topology(cls, topology):
@@ -330,9 +328,9 @@ def structure_from_topology(cls, topology):
     # trail edges
     trail_edges = []
     for edge in edges:
-        val = 0.
+        val = 0.0
         if topology.is_trail_edge(edge):
-            val = 1.
+            val = 1.0
         trail_edges.append(val)
     trail_edges = np.asarray(trail_edges)
 
@@ -340,8 +338,7 @@ def structure_from_topology(cls, topology):
     deviation_edges = np.logical_not(trail_edges).astype(float)
 
     # sequences
-    sequences = np.ones((topology.number_of_sequences(),
-                         topology.number_of_trails())).astype(int)
+    sequences = np.ones((topology.number_of_sequences(), topology.number_of_trails())).astype(int)
 
     sequences *= -1  # negate to deal with shifted trails
 
@@ -352,23 +349,13 @@ def structure_from_topology(cls, topology):
             seq = topology.node_sequence(node)
             sequences[seq][tidx] = node
 
-    print(sequences)
-    print(origin_nodes)
-
     origin_nodes = np.asarray(origin_nodes)
 
-    # pad sequences
-    # for sequence in topology.sequences():
-    #    print(sequence)
-
-    # check that no negative sequence exist
-    # assert not np.any(sequences == -1), "Negative sequences are currently unsupported!"
-
-    # raise "seqs"
-
-    return cls(nodes=nodes,
-               edges=edges,
-               origin_nodes=origin_nodes,
-               trail_edges=trail_edges,
-               deviation_edges=deviation_edges,
-               sequences=sequences)
+    return cls(
+        nodes=nodes,
+        edges=edges,
+        origin_nodes=origin_nodes,
+        trail_edges=trail_edges,
+        deviation_edges=deviation_edges,
+        sequences=sequences,
+    )

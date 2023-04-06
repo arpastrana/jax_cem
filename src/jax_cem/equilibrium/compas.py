@@ -3,8 +3,7 @@ from compas_cem.elements import Node
 from compas_cem.elements import Edge
 
 
-__all__ = ["form_from_eqstate",
-           "form_update"]
+__all__ = ["form_from_eqstate", "form_update"]
 
 
 def form_from_eqstate(structure, eqstate):
@@ -34,6 +33,7 @@ def form_from_eqstate(structure, eqstate):
 # ==========================================================================
 # Helpers
 # ==========================================================================
+
 
 def form_update(form, structure, eqstate):
     """

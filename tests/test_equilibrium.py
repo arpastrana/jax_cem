@@ -1,4 +1,3 @@
-
 import pytest
 
 import numpy as np
@@ -11,6 +10,7 @@ from jax_cem.equilibrium import form_from_eqstate
 # ==============================================================================
 # Tests - Static equilibrium
 # ==============================================================================
+
 
 def cs_out():
     """Static equilibrium results from compression strut."""
@@ -26,18 +26,11 @@ def cs_out():
 def tc_out():
     """Static equilibrium results from tension chain."""
     output = {}
-    output["xyz"] = {0: [0.0, 0.0, 0.0],
-                     1: [1.5, 0.0, 0.0],
-                     2: [2.5, 0.0, 0.0],
-                     3: [4.0, 0.0, 0.0]}
+    output["xyz"] = {0: [0.0, 0.0, 0.0], 1: [1.5, 0.0, 0.0], 2: [2.5, 0.0, 0.0], 3: [4.0, 0.0, 0.0]}
 
-    output["force"] = {(0, 1): 1.0,
-                       (1, 2): 1.0,
-                       (2, 3): 1.0}
+    output["force"] = {(0, 1): 1.0, (1, 2): 1.0, (2, 3): 1.0}
 
-    output["length"] = {(0, 1): 1.5,
-                        (1, 2): 1.0,
-                        (2, 3): 1.5}
+    output["length"] = {(0, 1): 1.5, (1, 2): 1.0, (2, 3): 1.5}
 
     output["residual"] = {3: [1.0, 0.0, 0.0]}
 
@@ -47,18 +40,11 @@ def tc_out():
 def cc_out():
     """Static equilibrium results from compression chain."""
     output = {}
-    output["xyz"] = {0: [0.0, 0.0, 0.0],
-                     1: [1.5, 0.0, 0.0],
-                     2: [2.5, 0.0, 0.0],
-                     3: [4.0, 0.0, 0.0]}
+    output["xyz"] = {0: [0.0, 0.0, 0.0], 1: [1.5, 0.0, 0.0], 2: [2.5, 0.0, 0.0], 3: [4.0, 0.0, 0.0]}
 
-    output["force"] = {(0, 1): -1.0,
-                       (1, 2): -1.0,
-                       (2, 3): -1.0}
+    output["force"] = {(0, 1): -1.0, (1, 2): -1.0, (2, 3): -1.0}
 
-    output["length"] = {(0, 1): 1.5,
-                        (1, 2): 1.0,
-                        (2, 3): 1.5}
+    output["length"] = {(0, 1): 1.5, (1, 2): 1.0, (2, 3): 1.5}
 
     output["residual"] = {3: [-1.0, 0.0, 0.0]}
 
@@ -68,21 +54,18 @@ def cc_out():
 def tf_out():
     """Static equilibrium results from threebar funicular."""
     output = {}
-    output["xyz"] = {0: [0.29289321881345254, -0.7071067811865475, 0.0],
-                     1: [1.0, 0.0, 0.0],
-                     2: [2.5, 0.0, 0.0],
-                     3: [3.207106, -0.7071067, 0.0]}
+    output["xyz"] = {
+        0: [0.29289321881345254, -0.7071067811865475, 0.0],
+        1: [1.0, 0.0, 0.0],
+        2: [2.5, 0.0, 0.0],
+        3: [3.207106, -0.7071067, 0.0],
+    }
 
-    output["force"] = {(0, 1): -1.414213561,
-                       (1, 2): -1.0,
-                       (2, 3): -1.41421356}
+    output["force"] = {(0, 1): -1.414213561, (1, 2): -1.0, (2, 3): -1.41421356}
 
-    output["length"] = {(0, 1): 1.0,
-                        (1, 2): 1.5,
-                        (2, 3): 1.0}
+    output["length"] = {(0, 1): 1.0, (1, 2): 1.5, (2, 3): 1.0}
 
-    output["residual"] = {0: [1.0, 1.0, -0.0],
-                          3: [-1.0, 1.0, 0.0]}
+    output["residual"] = {0: [1.0, 1.0, -0.0], 3: [-1.0, 1.0, 0.0]}
 
     return output
 
@@ -90,46 +73,57 @@ def tf_out():
 def bt2_out():
     """Static equilibrium results from braced tower 2d."""
     output = {}
-    output["xyz"] = {0: [0.11891271935545733, 0.04623304043571308, 0.0],
-                     1: [-0.14550216351451895, 1.0106420665842952, 0.0],
-                     2: [0.0, 2.0, 0.0],
-                     3: [1.5829003695589805, 0.11137412111377487, 0.0],
-                     4: [1.1455022100524879, 1.010642073428508, 0.0],
-                     5: [1.0, 2.0, 0.0]}
+    output["xyz"] = {
+        0: [0.11891271935545733, 0.04623304043571308, 0.0],
+        1: [-0.14550216351451895, 1.0106420665842952, 0.0],
+        2: [0.0, 2.0, 0.0],
+        3: [1.5829003695589805, 0.11137412111377487, 0.0],
+        4: [1.1455022100524879, 1.010642073428508, 0.0],
+        5: [1.0, 2.0, 0.0],
+    }
 
-    output["force"] = {(0, 1): -1.5154917766302523,
-                       (1, 2): -1.6714301665432025,
-                       (1, 4): -1.0,
-                       (1, 5): 1.0,
-                       (1, 3): 1.0,
-                       (2, 5): -1.0,
-                       (2, 4): 1.0,
-                       (3, 4): -1.1120156232900127,
-                       (4, 5): -1.6714302901903129}
+    output["force"] = {
+        (0, 1): -1.5154917766302523,
+        (1, 2): -1.6714301665432025,
+        (1, 4): -1.0,
+        (1, 5): 1.0,
+        (1, 3): 1.0,
+        (2, 5): -1.0,
+        (2, 4): 1.0,
+        (3, 4): -1.1120156232900127,
+        (4, 5): -1.6714302901903129,
+    }
 
-    output["length"] = {(0, 1): 1.0,
-                        (1, 2): 1.0,
-                        (1, 4): 1.2910043735670067,
-                        (1, 5): 1.5136063976572767,
-                        (1, 3): 1.9483475444811331,
-                        (2, 5): 1.0,
-                        (2, 4): 1.5136064284036903,
-                        (3, 4): 1.0,
-                        (4, 5): 1.0}
+    output["length"] = {
+        (0, 1): 1.0,
+        (1, 2): 1.0,
+        (1, 4): 1.2910043735670067,
+        (1, 5): 1.5136063976572767,
+        (1, 3): 1.9483475444811331,
+        (2, 5): 1.0,
+        (2, 4): 1.5136064284036903,
+        (3, 4): 1.0,
+        (4, 5): 1.0,
+    }
 
-    output["residual"] = {0: [-0.4007185806081004, 1.4615539484361662, -0.0],
-                          3: [0.40071844900288345, 0.5384458270605735, -0.0]}
+    output["residual"] = {
+        0: [-0.4007185806081004, 1.4615539484361662, -0.0],
+        3: [0.40071844900288345, 0.5384458270605735, -0.0],
+    }
 
     return output
 
 
-@pytest.mark.parametrize("topology, output",
-                         [(pytest.lazy_fixture("compression_strut"), cs_out()),
-                          (pytest.lazy_fixture("threebar_funicular"), tf_out()),
-                          # (pytest.lazy_fixture("braced_tower_2d"), bt2_out()),
-                          (pytest.lazy_fixture("tension_chain"), tc_out()),
-                          (pytest.lazy_fixture("compression_chain"), cc_out())
-                          ])
+@pytest.mark.parametrize(
+    "topology, output",
+    [
+        (pytest.lazy_fixture("compression_strut"), cs_out()),
+        (pytest.lazy_fixture("threebar_funicular"), tf_out()),
+        # (pytest.lazy_fixture("braced_tower_2d"), bt2_out()),
+        (pytest.lazy_fixture("tension_chain"), tc_out()),
+        (pytest.lazy_fixture("compression_chain"), cc_out()),
+    ],
+)
 def test_force_equilibrium_jax_output(topology, output):
     """
     Minute testing of forces and geometric outputs post force equilibrium.
@@ -155,6 +149,7 @@ def test_force_equilibrium_jax_output(topology, output):
 # ==============================================================================
 # Tests - Force Equilibrium Queries
 # ==============================================================================
+
 
 def check_nodes_xyz(form, node_xyz_out):
     for node in form.nodes(data=False):

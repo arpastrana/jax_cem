@@ -14,6 +14,9 @@ from jax_cem.geometry import vector_length
 from jax_cem.geometry import vector_normalized
 
 
+__all__ = ["EquilibriumModel"]
+
+
 class EquilibriumModel(eqx.Module):
     """
     An equilibrium model that implements the combinatorial equilibrium modeling (CEM) framework.
@@ -29,6 +32,7 @@ class EquilibriumModel(eqx.Module):
     planes: `jnp.array`
         The projection planes of trail edges of a topology diagram.
     """
+
     xyz: jax.Array  # N x 3 or A x 3?
     loads: jax.Array  # N x 3
     lengths: jax.Array  # N x 6?
@@ -80,52 +84,33 @@ class EquilibriumModel(eqx.Module):
 
         xyz = jnp.zeros((topology.number_of_nodes() + 1, 3))
         xyz_seq = self.xyz[topology.origin_nodes, :]
-        forces = jnp.where(self.forces != 0., self.forces, 0.0)
+        forces = jnp.where(self.forces != 0.0, self.forces, 0.0)
         residuals = jnp.zeros((topology.number_of_trails(), 3))
 
         residuals_sequences = []
         lengths_sequences = []
 
         for i, sequence in enumerate(topology.sequences):
-
-            # print()
-            # print("i", i)
-            # print("sequence")
-            # print(sequence)
-
             # padding mask
             is_sequence_padded = np.reshape(sequence, (-1, 1)) < 0
 
-            # # update position matrix
-            # # xyz = xyz.at[sequence[np.nonzero(is_sequence_padded)], :].set(xyz_seq)
+            # update position matrix
             xyz = xyz.at[sequence, :].set(xyz_seq)
-            # print("updated xyz")
-            # print(xyz)
 
             # node residuals
             residuals_new = self.nodes_equilibrium(topology, sequence, xyz[:-1], residuals)
             residuals = jnp.where(is_sequence_padded, residuals, residuals_new)
             residuals_sequences.append(residuals)
 
-            # print("residuals")
-            # print(residuals)
-
             # trail edge lengths
             lengths_plane = self.nodes_length_plane(topology, sequence, xyz_seq, residuals)
             lengths_signed = self.lengths[sequence].ravel()
-            lengths = jnp.where(lengths_signed != 0., lengths_signed, lengths_plane)
+            lengths = jnp.where(lengths_signed != 0.0, lengths_signed, lengths_plane)
             lengths_sequences.append(lengths)
-
-            # print("lengths")
-            # print(lengths)
 
             # next node position
             xyz_seq_new = self.nodes_position(xyz_seq, residuals, lengths)
             xyz_seq = jnp.where(is_sequence_padded, xyz_seq, xyz_seq_new)
-            # print("xyz seq")
-            # print(xyz_seq)
-
-        # raise ValueError("end of the journey")
 
         # node coordinates
         xyz = xyz[:-1]
@@ -135,19 +120,12 @@ class EquilibriumModel(eqx.Module):
         reactions = reactions.at[sequence, :].set(residuals)
 
         # edge forces
-        forces = self.edges_force(topology,
-                                  residuals_sequences[:-1],
-                                  lengths_sequences[:-1],
-                                  forces)
+        forces = self.edges_force(topology, residuals_sequences[:-1], lengths_sequences[:-1], forces)
 
         # edge lengths
         lengths = self.edges_length(topology, xyz)
 
-        return EquilibriumState(xyz=xyz,
-                                reactions=reactions,
-                                lengths=lengths,
-                                loads=self.loads,
-                                forces=forces)
+        return EquilibriumState(xyz=xyz, reactions=reactions, lengths=lengths, loads=self.loads, forces=forces)
 
     # ------------------------------------------------------------------------------
     # Node position
@@ -217,13 +195,13 @@ class EquilibriumModel(eqx.Module):
 
         # return zero cos nop if plane normal is zero
         # may raise nans, use double where trick
-        is_zero_normal = jnp.allclose(normal, 0.)
+        is_zero_normal = jnp.allclose(normal, 0.0)
         normal = jnp.where(is_zero_normal, jnp.ones_like(normal), normal)
-        cos_nop = jnp.where(is_zero_normal, 0., normal @ (origin - xyz))
+        cos_nop = jnp.where(is_zero_normal, 0.0, normal @ (origin - xyz))
 
         # return zero length if residual is zero
         # may raise nans, use double where trick
-        is_zero_res = jnp.allclose(residual, 0.)
+        is_zero_res = jnp.allclose(residual, 0.0)
         residual = jnp.where(is_zero_res, jnp.ones_like(residual), residual)
         length = jnp.where(is_zero_res, 0.0, cos_nop / (normal @ vector_normalized(residual)))
 
@@ -316,6 +294,7 @@ class EquilibriumModel(eqx.Module):
 # Helpers
 # ------------------------------------------------------------------------------
 
+
 def model_from_topology(cls, topology):
     """
     Create an equilibrium model from a COMPAS CEM topology diagram.
@@ -358,11 +337,7 @@ def model_from_topology(cls, topology):
     planes = jnp.asarray(planes)
     lengths = jnp.asarray(lengths)
 
-    return cls(xyz=xyz,
-               loads=loads,
-               lengths=lengths,
-               planes=planes,
-               forces=forces)
+    return cls(xyz=xyz, loads=loads, lengths=lengths, planes=planes, forces=forces)
 
 
 if __name__ == "__main__":
