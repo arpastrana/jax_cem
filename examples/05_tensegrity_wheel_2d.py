@@ -189,8 +189,8 @@ plotter.add(form_jax.transformed(T), nodesize=ns)
 
 # plot translated optimized form diagram
 T = Translation.from_vector([shift * 2.0, 0.0, 0.0])
-plotter.add(form_opt.transformed(T), nodesize=ns)
-plotter.add(form_jax_opt.transformed(T), nodesize=ns)
+# plotter.add(form_opt.transformed(T), nodesize=ns)
+plotter.add(form_jax_opt.transformed(T), nodesize=ns, show_nodetext=True)
 
 # show scene
 plotter.zoom_extents(padding=-0.3)

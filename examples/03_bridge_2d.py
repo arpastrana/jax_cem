@@ -246,7 +246,7 @@ for target_point in target_points:
     plotter.add(Point(x, y, z).transformed(T), size=5.0, facecolor=(1.0, 0.6, 0.0))
 
 # compas diagram
-plotter.add(form_opt.transformed(T), loadscale=loadscale, reactionscale=5.0, nodesize=nodesize, show_nodetext=True)
+plotter.add(form_opt, loadscale=loadscale, reactionscale=5.0, nodesize=nodesize, show_nodetext=True)
 # jax diagram
 plotter.add(form_jax_opt.transformed(T), loadscale=loadscale, reactionscale=5.0, nodesize=nodesize, show_nodetext=True)
 
