@@ -4,6 +4,8 @@ import jaxopt
 import numpy as np
 import jax.numpy as jnp
 
+import optax
+
 import equinox as eqx
 
 from jax import jit
@@ -128,16 +130,13 @@ structure = EquilibriumStructure.from_topology_diagram(topology)
 model = EquilibriumModel.from_topology_diagram(topology)
 eqstate = model(structure)
 
-tree_map(lambda x: print(x), eqstate)
+# tree_map(lambda x: print(x), eqstate)
 
 
 nodes = (1, 4)
 # y = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]])  # (0, 3)
 y = jnp.array([[-1.5, -1.5, 0.0], [4.5, -1.5, 0.0]])  # 1, 4
 # y = jnp.array([[-3.0, -3.0, 0.0], [6.0, -3.0, 0.0]])  # (2, 5)
-
-
-print(structure.edges)
 
 
 # @jax.jit
@@ -153,17 +152,14 @@ print(f"{loss=}")
 grad_fn = jax.grad(loss_fn)
 grad = grad_fn(model, structure, y)
 print(f"{grad=}")
-tree_map(lambda x: print(x), grad)
+# tree_map(lambda x: print(x), grad)
 
 # Step 2
 print("Equinoxing!")
 filter_spec = tree_map(lambda _: False, model)
-filter_spec = eqx.tree_at(
-    lambda tree: (tree.forces),
-    filter_spec,
-    replace=(True),
-)
-
+filter_spec = eqx.tree_at(lambda tree: (tree.forces),
+                          filter_spec,
+                          replace=(True))
 
 @eqx.filter_jit
 def loss_fn(diff_model, static_model, structure, y):
@@ -183,12 +179,12 @@ loss = loss_fn(diff_model, static_model, structure, y)
 print(f"{loss=}")
 grad_fn = eqx.filter_grad(loss_fn)
 grad = grad_fn(diff_model, static_model, structure, y)
-print(f"{grad=}")
+# print(f"{grad=}")
 loss_and_grad_fn = eqx.filter_jit(eqx.filter_value_and_grad(loss_fn))
 loss, grad = loss_and_grad_fn(diff_model, static_model, structure, y)
 print(f"{loss=}")
-print(f"{grad=}")
-tree_map(lambda x: print(x), grad)
+# print(f"{grad=}")
+# tree_map(lambda x: print(x), grad)
 
 # Optimization
 print("\noptimizing with scipy")
@@ -198,32 +194,77 @@ opt_result = opt.run(diff_model, static_model, structure, y)
 diff_model_star, opt_state_star = opt_result
 loss = loss_fn(diff_model_star, static_model, structure, y)
 print(f"{loss=}")
-print(opt_state_star)
 
-print("\noptimizing with lbfgsb")
-optimizer = jaxopt.LBFGS
-# fn = loss_fn
+print("\noptimizing using optax with updates")
+@eqx.filter_jit
+def make_step(model, x, y, opt_state):
+
+    @eqx.filter_value_and_grad
+    def loss_fn(diff_model, static_model, x, y):
+        model = eqx.combine(diff_model, static_model)
+        eqstate = model(structure)
+        pred_y = eqstate.xyz[nodes, :]
+        return jnp.sum((y - pred_y) ** 2)
+
+    diff_model, static_model = eqx.partition(model, filter_spec)
+    loss, grads = loss_fn(diff_model, static_model, x, y)
+    updates, opt_state = optim.update(grads, opt_state)
+    model = eqx.apply_updates(model, updates)
+
+    return model, opt_state, loss
+
+
+original_model = model
+optim = optax.adam(0.2)
+opt_state = optim.init(model)
+
+for step in range(10):
+    model, opt_state, loss = make_step(model, structure, y, opt_state)
+    print("iteration", step, "loss", loss)
+
+# print("\noptimizing with lbfgs")
+# optim = jaxopt.LBFGS
+# opt = optimizer(fn, maxiter=100, tol=1e-6, value_and_grad=True, jit=False, unroll=True)  # unroll=True)
+# print("\noptimizing with run")
+# opt_result = opt.run(diff_model, static_model, structure, y)
+# diff_model_star, opt_state_star = opt_result
+# tree_map(lambda x: print(x), diff_model_star)
+# loss = loss_fn(diff_model_star, static_model, structure, y)
+# print(f"{loss=}")
+
+print("\noptimizing using lbfgs with updates")
+# @eqx.filter_value_and_grad
+# @jax.value_and_grad
+def loss_and_grad_fn(diff_model, static_model, x, y):
+    return loss_fn(diff_model, static_model, x, y)
+
 fn = loss_and_grad_fn
-opt = optimizer(fn, maxiter=100, tol=1e-6, value_and_grad=True, jit=False, unroll=True)  # unroll=True)
 
-print("\noptimizing with run")
-opt_result = opt.run(diff_model, static_model, structure, y)
-diff_model_star, opt_state_star = opt_result
-tree_map(lambda x: print(x), diff_model_star)
-loss = loss_fn(diff_model_star, static_model, structure, y)
-print(f"{loss=}")
+optim = jaxopt.LBFGS(fn,
+                     maxiter=100,
+                     tol=1e-6,
+                     value_and_grad=False,
+                     jit=False,
+                     unroll=True)
+
+print("warming up")
+opt_state = optim.init_state(diff_model, static_model, structure, y)
+update = jit(optim.update)
+_ = update(diff_model, opt_state, static_model, structure, y)
+print("warmed up")
+
+for i in range(10):
+    diff_model, opt_state = update(diff_model, opt_state, static_model, structure, y)
+    print("iteration", i, "loss", opt_state.value)
+
+
+# loss = loss_fn(diff_model, static_model, structure, y)
+# print(f"{loss=}")
+
+# loss = loss_fn(diff_model, static_model, structure, y)
+# print(f"{loss=}")
 raise
 
-print("\noptimizing with updates")
-opt_state = opt.init_state(diff_model, static_model, structure, y)
-for i in range(10):
-    print("iteration", i)
-    # grads = grad_fn(diff_model, static_model, structure, y)
-    # diff_model, opt_state = optim.update(grads, opt_state)
-    diff_model, opt_state = opt.update(diff_model, opt_state, static_model, structure, y)
-
-loss = loss_fn(diff_model, static_model, structure, y)
-print(f"{loss=}")
 
 # model = eqx.apply_updates(model, updates)
 # diff_model, state = opt.update(diff_model, opt_state, static_model, structure, y)
