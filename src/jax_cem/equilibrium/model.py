@@ -79,69 +79,72 @@ class EquilibriumModel(eqx.Module):
         - No indirect deviation edges exist in the structure.
         - No shape-dependent loads are applied to the structure.
         """
-
         # for t in range(kmax)...
-
         xyz = jnp.zeros((topology.number_of_nodes() + 1, 3))
         xyz_seq = self.xyz[topology.origin_nodes, :]
-        forces = jnp.where(self.forces != 0.0, self.forces, 0.0)
-        residuals = jnp.zeros((topology.number_of_trails(), 3))
+        residuals_seq = jnp.zeros((topology.number_of_trails(), 3))
 
-        residuals_sequences = []
-        lengths_sequences = []
+        residuals_seqs = []
+        lengths_seqs = []
 
         for i, sequence in enumerate(topology.sequences):
-            # padding mask
-            is_sequence_padded = np.reshape(sequence, (-1, 1)) < 0
 
             # update position matrix
             xyz = xyz.at[sequence, :].set(xyz_seq)
 
-            # node residuals
-            residuals_new = self.nodes_equilibrium(topology, sequence, xyz[:-1], residuals)
-            residuals = jnp.where(is_sequence_padded, residuals, residuals_new)
-            residuals_sequences.append(residuals)
+            # sequence equilibrium
+            state_seq = self.sequence_equilibrium(topology, sequence, xyz, residuals_seq)
+            xyz_seq, residuals_seq, lengths_seq = state_seq
 
-            # trail edge lengths
-            lengths_plane = self.nodes_length_plane(topology, sequence, xyz_seq, residuals)
-            lengths_signed = self.lengths[sequence].ravel()
-            lengths = jnp.where(lengths_signed != 0.0, lengths_signed, lengths_plane)
-            lengths_sequences.append(lengths)
-
-            # next node position
-            xyz_seq_new = self.nodes_position(xyz_seq, residuals, lengths)
-            xyz_seq = jnp.where(is_sequence_padded, xyz_seq, xyz_seq_new)
+            # store
+            residuals_seqs.append(residuals_seq)
+            lengths_seqs.append(lengths_seq)
 
         # node coordinates
         xyz = xyz[:-1]
 
         # reaction forces
         reactions = jnp.zeros((topology.number_of_nodes(), 3))
-        reactions = reactions.at[sequence, :].set(residuals)
+        reactions = reactions.at[sequence, :].set(residuals_seq)
 
         # edge forces
-        forces = self.edges_force(topology, residuals_sequences[:-1], lengths_sequences[:-1], forces)
+        forces = jnp.where(self.forces != 0.0, self.forces, 0.0)
+        forces = self.edges_force(topology, residuals_seqs[:-1], lengths_seqs[:-1], forces)
 
         # edge lengths
         lengths = self.edges_length(topology, xyz)
 
         return EquilibriumState(xyz=xyz, reactions=reactions, lengths=lengths, loads=self.loads, forces=forces)
 
+
     # ------------------------------------------------------------------------------
-    # Node position
+    # Sequence equilibrium
     # ------------------------------------------------------------------------------
 
-    def nodes_position(self, xyz_seq, residuals, lengths):
+    def sequence_equilibrium(self, topology, sequence, xyz, residuals_seq):
         """
-        Calculate the position of the next sequence of nodes of a topology diagram.
+        Compute static equilibrium on all the nodes of a sequence.
         """
-        return vmap(self.position_vector)(xyz_seq, residuals, lengths)
+        # node positions
+        xyz_seq = xyz[sequence, :]
 
-    def node_position(self, xyz, residual, length):
-        """
-        Calculate the position of the next node on a trail of a topology diagram.
-        """
-        return self.position_vector(xyz, residual, length)
+        # padding mask
+        is_sequence_padded = np.reshape(sequence, (-1, 1)) < 0
+
+        # node residuals
+        residuals_new = self.nodes_equilibrium(topology, sequence, xyz[:-1], residuals_seq)
+        residuals_seq = jnp.where(is_sequence_padded, residuals_seq, residuals_new)
+
+        # trail edge lengths
+        lengths_plane = self.nodes_length_plane(topology, sequence, xyz_seq, residuals_seq)
+        lengths_signed = self.lengths[sequence].ravel()
+        lengths_seq = jnp.where(lengths_signed != 0.0, lengths_signed, lengths_plane)
+
+        # next node position
+        xyz_seq_new = self.nodes_position(xyz_seq, residuals_seq, lengths_seq)
+        xyz_seq = jnp.where(is_sequence_padded, xyz_seq, xyz_seq_new)
+
+        return xyz_seq, residuals_seq, lengths_seq
 
     # ------------------------------------------------------------------------------
     # Node equilibrium
@@ -168,6 +171,22 @@ class EquilibriumModel(eqx.Module):
         deviation = self.deviation_vector(forces, vectors)
 
         return self.residual_vector(residual, deviation, load)
+
+    # ------------------------------------------------------------------------------
+    # Node position
+    # ------------------------------------------------------------------------------
+
+    def nodes_position(self, xyz_seq, residuals, lengths):
+        """
+        Calculate the position of the next sequence of nodes of a topology diagram.
+        """
+        return vmap(self.position_vector)(xyz_seq, residuals, lengths)
+
+    def node_position(self, xyz, residual, length):
+        """
+        Calculate the position of the next node on a trail of a topology diagram.
+        """
+        return self.position_vector(xyz, residual, length)
 
     # ------------------------------------------------------------------------------
     # Node lengths
