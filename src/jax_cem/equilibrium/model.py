@@ -79,6 +79,28 @@ class EquilibriumModel(eqx.Module):
         -----------
         - No shape dependent loads exist in the structure.
         """
+        xyz = jnp.zeros((topology.number_of_nodes() + 1, 3))  # NOTE: add dummy last row
+        xyz, residuals, lengths = self.equilibrium(topology, xyz)
+
+        if tmax > 1:
+            xyz, residuals, lengths = self.equilibrium_iterative(topology, xyz, tmax, eta)
+
+        return self.equilibrium_state(topology, xyz, residuals, lengths)
+
+    # ------------------------------------------------------------------------------
+    #  Equilibrium modes
+    # ------------------------------------------------------------------------------
+
+    def equilibrium(self, topology, xyz):
+        """
+        Calculate static equilibrium on a structure.
+        """
+        return self.sequences_equilibrium(topology, xyz, indirect=False)
+
+    def equilibrium_iterative(self, topology, xyz, tmax, eta, scale=1e6):
+        """
+        Calculate static equilibrium on a structure iteratively.
+        """
         def distance(xyz, xyz_last):
             return jnp.sum(jnp.linalg.norm(xyz_last[:-1] - xyz[:-1], axis=1))
 
@@ -91,109 +113,22 @@ class EquilibriumModel(eqx.Module):
 
         def body_fn(val):
             xyz_last, _ = val
-            xyz, _, _ = self.sequences_equilibrium(topology, xyz_last, iter=1)
+            xyz, _, _ = self.sequences_equilibrium(topology, xyz_last, indirect=True)
             return xyz, xyz_last
 
-        # equilibrium with indirect deviation edge forces set to 0.0
-        # xyz, residuals, lengths = self.sequences_equilibrium(topology, xyz, iter=0)
-        # xyz_last = xyz
-        xyz = jnp.zeros((topology.number_of_nodes() + 1, 3))  # NOTE: add dummy last row
-        xyz, residuals, lengths = self.sequences_equilibrium(topology, xyz, iter=0)
-
-        # iterative equilibrium
-
-        # def fori_loop(lower, upper, body_fun, init_val):
-          # val = init_val
-          # for i in range(lower, upper):
-            # val = body_fun(i, val)
-          # return val
-
-        # def while_loop(cond_fun, body_fun, init_val):
-        #   val = init_val
-        #   while cond_fun(val):
-        #     val = body_fun(val)
-        #   return val
-        init_val = xyz * 1e9, xyz
+        init_val = xyz * scale, xyz
         xyz_last, _ = while_loop(cond_fn, body_fn, init_val, max_steps=tmax, kind="checkpointed")
-        xyz, residuals, lengths = self.sequences_equilibrium(topology, xyz_last, iter=1)
 
+        return self.sequences_equilibrium(topology, xyz_last, indirect=True)
 
-        # for t in range(1, tmax + 1):
-        #     xyz, residuals, lengths = self.sequences_equilibrium(topology, xyz, iter=t)
+    # ------------------------------------------------------------------------------
+    #  Equilibrium state
+    # ------------------------------------------------------------------------------
 
-        #     # calculate residual distance
-        #     distance = jnp.sum(jnp.linalg.norm(xyz_last[:-1] - xyz[:-1], axis=1))
-
-        #     # if residual distance smaller than threshold, stop iterating early
-        #     if distance <= eta:
-        #         break
-
-        #     xyz_last = xyz
-
-        # print log
-        if verbose:
-            msg = "====== Residual: {}======"
-            print(msg.format(distance(xyz, xyz_last)))
-
-        # node positions
-        xyz = xyz[:-1]
-
-        # reaction forces
-        reactions = jnp.zeros((topology.number_of_nodes(), 3))
-        reactions = reactions.at[topology.support_nodes, :].set(residuals[-1])
-
-        # edge forces
-        forces = jnp.where(self.forces != 0.0, self.forces, 0.0)
-        forces = self.edges_force(topology, residuals[:-1], lengths[:-1], forces)
-
-        # edge lengths
-        lengths = self.edges_length(topology, xyz)
-
-        return EquilibriumState(xyz=xyz, reactions=reactions, lengths=lengths, loads=self.loads, forces=forces)
-
-    def __call2__(self, topology, tmax=0, eta=1e-6, verbose=False):
+    def equilibrium_state(self, topology, xyz, residuals, lengths):
         """
-        Compute an equilibrium state on a structure given a topology diagram.
-
-        The computation follows the combinatorial equilibrium modeling (CEM) form-finding algorithm.
-
-        Parameters
-        ----------
-        topology : `jax_cem.equilibrium.EquilibriumStructure`
-            A structure.
-
-        Returns
-        -------
-        eqstate: `jax_cem.equilibrium.EquilibriumState`
-            An equilibrium state.
-
-        Assumptions
-        -----------
-        - No shape dependent loads exist in the structure.
+        Put together an equilibrium state object.
         """
-        # equilibrium with indirect deviation edge forces set to 0.0
-        xyz = jnp.zeros((topology.number_of_nodes() + 1, 3))  # NOTE: add dummy last row
-        xyz, residuals, lengths = self.sequences_equilibrium(topology, xyz, iter=0)
-        xyz_last = xyz
-
-        # iterative equilibrium
-        for t in range(1, tmax + 1):
-            xyz, residuals, lengths = self.sequences_equilibrium(topology, xyz, iter=t)
-
-            # calculate residual distance
-            distance = jnp.sum(jnp.linalg.norm(xyz_last[:-1] - xyz[:-1], axis=1))
-
-            # if residual distance smaller than threshold, stop iterating early
-            if distance <= eta:
-                break
-
-            xyz_last = xyz
-
-        # print log
-        if verbose:
-            msg = "====== Completed Equilibrium in {} iters. Residual: {}======"
-            print(msg.format(t, distance))
-
         # node positions
         xyz = xyz[:-1]
 
@@ -214,12 +149,10 @@ class EquilibriumModel(eqx.Module):
     # Sequence equilibrium
     # ------------------------------------------------------------------------------
 
-    def sequences_equilibrium(self, topology, xyz, iter):
+    def sequences_equilibrium(self, topology, xyz, indirect):
         """
         Calculate static equilibrium on a structure.
         """
-        # xyz = jnp.zeros((topology.number_of_nodes() + 1, 3))  # NOTE: add dummy last row
-        # xyz = xyz.at[topology.nodes, :].set(self.xyz)
         xyz_seq = self.xyz[topology.origin_nodes, :]
         residuals_seq = jnp.zeros((topology.number_of_trails(), 3))
 
@@ -231,7 +164,7 @@ class EquilibriumModel(eqx.Module):
             xyz = xyz.at[sequence, :].set(xyz_seq)
 
             # sequence equilibrium
-            state_seq = self.sequence_equilibrium(topology, sequence, xyz, residuals_seq, iter)
+            state_seq = self.sequence_equilibrium(topology, sequence, xyz, residuals_seq, indirect)
             xyz_seq, residuals_seq, lengths_seq = state_seq
 
             # store
@@ -240,7 +173,7 @@ class EquilibriumModel(eqx.Module):
 
         return xyz, residuals_seqs, lengths_seqs
 
-    def sequence_equilibrium(self, topology, sequence, xyz, residuals_seq, iter):
+    def sequence_equilibrium(self, topology, sequence, xyz, residuals_seq, indirect):
         """
         Compute static equilibrium on all the nodes of a sequence.
         """
@@ -251,7 +184,7 @@ class EquilibriumModel(eqx.Module):
         is_sequence_padded = np.reshape(sequence, (-1, 1)) < 0
 
         # node residuals
-        residuals_new = self.nodes_equilibrium(topology, sequence, xyz[:-1], residuals_seq, iter)
+        residuals_new = self.nodes_equilibrium(topology, sequence, xyz[:-1], residuals_seq, indirect)
         residuals_seq = jnp.where(is_sequence_padded, residuals_seq, residuals_new)
 
         # trail edge lengths
@@ -269,7 +202,7 @@ class EquilibriumModel(eqx.Module):
     # Node equilibrium
     # ------------------------------------------------------------------------------
 
-    def nodes_equilibrium(self, topology, sequence, xyz, residuals, iter):
+    def nodes_equilibrium(self, topology, sequence, xyz, residuals, indirect):
         """
         Calculate static equilibrium at one node of a topology diagram. Vectorized.
         """
@@ -277,9 +210,9 @@ class EquilibriumModel(eqx.Module):
         vectors = self.edges_vector(xyz, topology.connectivity)
         vectors = vmap(vector_normalized)(vectors)
 
-        return node_equilibrium_vmap(topology, sequence, residuals, vectors, iter)
+        return node_equilibrium_vmap(topology, sequence, residuals, vectors, indirect)
 
-    def node_equilibrium(self, topology, index, residual, vectors, iter):
+    def node_equilibrium(self, topology, index, residual, vectors, indirect):
         """
         Calculate static equilibrium at one node of a topology diagram.
         """
@@ -287,7 +220,7 @@ class EquilibriumModel(eqx.Module):
         incidence = topology.incidence[:, index] * topology.deviation_edges
 
         forces = jnp.ravel(self.forces) * incidence
-        if iter == 0:
+        if not indirect:
             forces = forces * topology.indirect_edges
 
         deviation = self.deviation_vector(forces, vectors)
