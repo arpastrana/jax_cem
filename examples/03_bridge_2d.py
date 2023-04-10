@@ -146,7 +146,7 @@ form_jax = form_from_eqstate(structure, eqstate)
 @jit
 def loss_fn(diff_model, static_model, structure, y):
     model = eqx.combine(diff_model, static_model)
-    eqstate = model(structure)
+    eqstate = model(structure, tmax=1)
     pred_y = eqstate.xyz[nodes_opt, :]
     return jnp.sum((y - pred_y) ** 2)
 
