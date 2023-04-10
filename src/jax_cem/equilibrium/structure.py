@@ -33,6 +33,7 @@ class EquilibriumStructure(eqx.Module):
     support_nodes: jax.Array  # nodes
     trail_edges: jax.Array  # indices in edges, or mask?
     deviation_edges: jax.Array  # indices in edges or mask?
+    indirect_edges: jax.Array  # indices in edges or mask?
     sequences: jax.Array  # nodes verbatim
     node_index: jax.Array
     edge_index: jax.Array
@@ -40,13 +41,16 @@ class EquilibriumStructure(eqx.Module):
     incidence: jax.Array
     sequences_edges: jax.Array
 
-    def __init__(self, nodes, edges, origin_nodes, support_nodes, trail_edges, deviation_edges, sequences):
+    def __init__(
+        self, nodes, edges, origin_nodes, support_nodes, trail_edges, deviation_edges, indirect_edges, sequences
+    ):
         self.nodes = nodes
         self.edges = edges
         self.origin_nodes = origin_nodes
         self.support_nodes = support_nodes
         self.trail_edges = trail_edges
         self.deviation_edges = deviation_edges
+        self.indirect_edges = indirect_edges
         self.sequences = sequences
 
         self.node_index = {node: index for index, node in enumerate(self.nodes)}
@@ -318,9 +322,6 @@ def structure_from_topology(cls, topology):
     """
     # there must be at least one trail
     assert topology.number_of_trails() > 0, "No trails in the diagram!"
-    # valide that no indirect deviation edges exist
-    msg = "Indirect deviation edges are currently unsupported!"
-    assert topology.number_of_indirect_deviation_edges() == 0, msg
 
     # nodes
     nodes = np.asarray(sorted(list(topology.nodes())))
@@ -340,10 +341,17 @@ def structure_from_topology(cls, topology):
     # deviation edges
     deviation_edges = np.logical_not(trail_edges).astype(float)
 
+    # indirect deviation edges
+    indirect_edges = deviation_edges.copy()  # np.zeros_like(deviation_edges)
+    for i, edge in enumerate(edges):
+        if topology.is_indirect_deviation_edge(edge):
+            indirect_edges[i] = 0.0
+
     # sequences
     sequences = np.ones((topology.number_of_sequences(), topology.number_of_trails())).astype(int)
 
-    sequences *= -1  # negate to deal with shifted trails
+    # negate to deal with shifted trail
+    sequences *= -1
 
     origin_nodes = []
     for tidx, (onode, trail) in enumerate(topology.trails(True)):
@@ -363,5 +371,6 @@ def structure_from_topology(cls, topology):
         support_nodes=support_nodes,
         trail_edges=trail_edges,
         deviation_edges=deviation_edges,
+        indirect_edges=indirect_edges,
         sequences=sequences,
     )
