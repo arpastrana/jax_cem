@@ -58,7 +58,7 @@ class EquilibriumModel(eqx.Module):
         """
         return model_from_topology(cls, topology)
 
-    def __call__(self, topology, *args, **kwargs):
+    def __call__(self, topology):
         """
         Compute an equilibrium state on a structure given a topology diagram.
 
@@ -79,8 +79,33 @@ class EquilibriumModel(eqx.Module):
         - No indirect deviation edges exist in the structure.
         - No shape-dependent loads are applied to the structure.
         """
-        # for t in range(kmax)...
-        xyz = jnp.zeros((topology.number_of_nodes() + 1, 3))
+        xyz, residuals, lengths = self.sequences_equilibrium(topology)
+
+        # node positions
+        xyz = xyz[:-1]
+
+        # reaction forces
+        reactions = jnp.zeros((topology.number_of_nodes(), 3))
+        reactions = reactions.at[topology.support_nodes, :].set(residuals[-1])
+
+        # edge forces
+        forces = jnp.where(self.forces != 0.0, self.forces, 0.0)
+        forces = self.edges_force(topology, residuals[:-1], lengths[:-1], forces)
+
+        # edge lengths
+        lengths = self.edges_length(topology, xyz)
+
+        return EquilibriumState(xyz=xyz, reactions=reactions, lengths=lengths, loads=self.loads, forces=forces)
+
+    # ------------------------------------------------------------------------------
+    # Sequence equilibrium
+    # ------------------------------------------------------------------------------
+
+    def sequences_equilibrium(self, topology):
+        """
+        Calculate static equilibrium on a structure.
+        """
+        xyz = jnp.zeros((topology.number_of_nodes() + 1, 3))  # NOTE: add dummy last row
         xyz_seq = self.xyz[topology.origin_nodes, :]
         residuals_seq = jnp.zeros((topology.number_of_trails(), 3))
 
@@ -88,7 +113,6 @@ class EquilibriumModel(eqx.Module):
         lengths_seqs = []
 
         for i, sequence in enumerate(topology.sequences):
-
             # update position matrix
             xyz = xyz.at[sequence, :].set(xyz_seq)
 
@@ -100,26 +124,7 @@ class EquilibriumModel(eqx.Module):
             residuals_seqs.append(residuals_seq)
             lengths_seqs.append(lengths_seq)
 
-        # node coordinates
-        xyz = xyz[:-1]
-
-        # reaction forces
-        reactions = jnp.zeros((topology.number_of_nodes(), 3))
-        reactions = reactions.at[sequence, :].set(residuals_seq)
-
-        # edge forces
-        forces = jnp.where(self.forces != 0.0, self.forces, 0.0)
-        forces = self.edges_force(topology, residuals_seqs[:-1], lengths_seqs[:-1], forces)
-
-        # edge lengths
-        lengths = self.edges_length(topology, xyz)
-
-        return EquilibriumState(xyz=xyz, reactions=reactions, lengths=lengths, loads=self.loads, forces=forces)
-
-
-    # ------------------------------------------------------------------------------
-    # Sequence equilibrium
-    # ------------------------------------------------------------------------------
+        return xyz, residuals_seqs, lengths_seqs
 
     def sequence_equilibrium(self, topology, sequence, xyz, residuals_seq):
         """
