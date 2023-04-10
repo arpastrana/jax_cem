@@ -74,9 +74,9 @@ topology.build_trails()
 # Delete indirect deviation edges
 # ------------------------------------------------------------------------------
 
-deletable = list(topology.indirect_deviation_edges())
-for u, v in deletable:
-    topology.delete_edge(u, v)
+# deletable = list(topology.indirect_deviation_edges())
+# for u, v in deletable:
+#     topology.delete_edge(u, v)
 
 # ------------------------------------------------------------------------------
 # Generate trails
@@ -146,7 +146,7 @@ form_jax = form_from_eqstate(structure, eqstate)
 @jit
 def loss_fn(diff_model, static_model, structure, y):
     model = eqx.combine(diff_model, static_model)
-    eqstate = model(structure, tmax=1)
+    eqstate = model(structure, tmax=100)
     pred_y = eqstate.xyz[nodes_opt, :]
     return jnp.sum((y - pred_y) ** 2)
 
@@ -161,19 +161,19 @@ filter_spec = eqx.tree_at(lambda tree: (tree.lengths, tree.forces), filter_spec,
 # split model into differentiable and static submodels
 diff_model, static_model = eqx.partition(model, filter_spec)
 
-# # create bounds
-# bound_low = eqx.tree_at(lambda tree: (tree.lengths, tree.forces),
-#                         diff_model,
-#                         replace=(-3. * np.ones_like(model.forces), -5. * np.ones_like(model.lengths)))
-# print(bound_low.lengths)
-# print(bound_low.forces)
-# bound_up = eqx.tree_at(lambda tree: (tree.lengths, tree.forces),
-#                        diff_model,
-#                        replace=(17. * np.ones_like(model.forces), 15. * np.ones_like(model.lengths)))
-# print(bound_up.lengths)
-# print(bound_up.forces)
+# create bounds
+bound_low = eqx.tree_at(lambda tree: (tree.lengths, tree.forces),
+                        diff_model,
+                        replace=(-3. * np.ones_like(model.forces), -3.0 * np.ones_like(model.lengths)))
+print(bound_low.lengths)
+print(bound_low.forces)
+bound_up = eqx.tree_at(lambda tree: (tree.lengths, tree.forces),
+                       diff_model,
+                       replace=(17. * np.ones_like(model.forces), 15. * np.ones_like(model.lengths)))
+print(bound_up.lengths)
+print(bound_up.forces)
 
-# bounds = (bound_low, bound_up)
+bounds = (bound_low, bound_up)
 
 # evaluate loss function at the start
 loss = loss_fn(diff_model, static_model, structure, y)
@@ -181,13 +181,13 @@ print(f"{loss=}")
 
 # solve optimization problem with scipy
 print("\n***Optimizing with scipy***")
-optimizer = jaxopt.ScipyMinimize
-# optimizer = jaxopt.ScipyBoundedMinimize
+# optimizer = jaxopt.ScipyMinimize
+optimizer = jaxopt.ScipyBoundedMinimize
 
 opt = optimizer(fun=loss_fn, method="L-BFGS-B", jit=True, tol=1e-6, maxiter=100)
 
-opt_result = opt.run(diff_model, static_model, structure, y)
-# opt_result = opt.run(diff_model, bounds, static_model, structure, y)
+# opt_result = opt.run(diff_model, static_model, structure, y)
+opt_result = opt.run(diff_model, bounds, static_model, structure, y)
 diff_model_star, opt_state_star = opt_result
 
 # evaluate loss function at optimum point
@@ -246,7 +246,7 @@ for target_point in target_points:
     plotter.add(Point(x, y, z).transformed(T), size=5.0, facecolor=(1.0, 0.6, 0.0))
 
 # compas diagram
-plotter.add(form_opt, loadscale=loadscale, reactionscale=5.0, nodesize=nodesize, show_nodetext=True)
+plotter.add(form_opt.transformed(T), loadscale=loadscale, reactionscale=5.0, nodesize=nodesize, show_nodetext=True)
 # jax diagram
 plotter.add(form_jax_opt.transformed(T), loadscale=loadscale, reactionscale=5.0, nodesize=nodesize, show_nodetext=True)
 
