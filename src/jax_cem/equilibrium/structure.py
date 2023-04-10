@@ -30,6 +30,7 @@ class EquilibriumStructure(eqx.Module):
     nodes: jax.Array  # nodes
     edges: jax.Array  # pairs of nodes
     origin_nodes: jax.Array  # nodes
+    support_nodes: jax.Array  # nodes
     trail_edges: jax.Array  # indices in edges, or mask?
     deviation_edges: jax.Array  # indices in edges or mask?
     sequences: jax.Array  # nodes verbatim
@@ -39,10 +40,11 @@ class EquilibriumStructure(eqx.Module):
     incidence: jax.Array
     sequences_edges: jax.Array
 
-    def __init__(self, nodes, edges, origin_nodes, trail_edges, deviation_edges, sequences):
+    def __init__(self, nodes, edges, origin_nodes, support_nodes, trail_edges, deviation_edges, sequences):
         self.nodes = nodes
         self.edges = edges
         self.origin_nodes = origin_nodes
+        self.support_nodes = support_nodes
         self.trail_edges = trail_edges
         self.deviation_edges = deviation_edges
         self.sequences = sequences
@@ -169,6 +171,7 @@ class EquilibriumStructure2:
     nodes: np.array  # nodes
     edges: np.array  # pairs of nodes
     origin_nodes: np.array  # nodes
+    support_nodes: np.array  # nodes
     trail_edges: np.array  # indices in edges, or mask?
     deviation_edges: np.array  # indices in edges or mask?
     sequences: np.array  # nodes verbatim
@@ -351,10 +354,13 @@ def structure_from_topology(cls, topology):
 
     origin_nodes = np.asarray(origin_nodes)
 
+    support_nodes = np.asarray(list(topology.support_nodes()))
+
     return cls(
         nodes=nodes,
         edges=edges,
         origin_nodes=origin_nodes,
+        support_nodes=support_nodes,
         trail_edges=trail_edges,
         deviation_edges=deviation_edges,
         sequences=sequences,
