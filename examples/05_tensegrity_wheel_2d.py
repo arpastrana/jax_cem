@@ -134,7 +134,7 @@ aux_edges = [structure.edge_index[edge] for edge in topology.auxiliary_trail_edg
 @jit
 def loss_fn(diff_model, static_model, structure, y):
     model = eqx.combine(diff_model, static_model)
-    eqstate = model(structure)
+    eqstate = model(structure, tmax=1)
     pred_y = eqstate.forces[aux_edges, :]
     return jnp.sum((y - pred_y) ** 2)
 

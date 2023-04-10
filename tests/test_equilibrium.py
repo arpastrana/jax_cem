@@ -119,7 +119,7 @@ def bt2_out():
     [
         (pytest.lazy_fixture("compression_strut"), cs_out()),
         (pytest.lazy_fixture("threebar_funicular"), tf_out()),
-        # (pytest.lazy_fixture("braced_tower_2d"), bt2_out()),
+        (pytest.lazy_fixture("braced_tower_2d"), bt2_out()),
         (pytest.lazy_fixture("tension_chain"), tc_out()),
         (pytest.lazy_fixture("compression_chain"), cc_out()),
     ],
