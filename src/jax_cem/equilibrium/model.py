@@ -101,6 +101,7 @@ class EquilibriumModel(eqx.Module):
         """
         Calculate static equilibrium on a structure iteratively.
         """
+
         def distance(xyz, xyz_last):
             return jnp.sum(jnp.linalg.norm(xyz_last[:-1] - xyz[:-1], axis=1))
 
