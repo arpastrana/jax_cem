@@ -336,7 +336,7 @@ def structure_from_topology(cls, topology):
         if topology.is_trail_edge(edge):
             val = 1.0
         trail_edges.append(val)
-    trail_edges = np.asarray(trail_edges)
+    trail_edges = np.asarray(trail_edges).astype(int)
 
     # deviation edges
     deviation_edges = np.logical_not(trail_edges).astype(float)
@@ -354,15 +354,17 @@ def structure_from_topology(cls, topology):
     sequences *= -1
 
     origin_nodes = []
+    support_nodes = []
     for tidx, (onode, trail) in enumerate(topology.trails(True)):
         origin_nodes.append(onode)
-        for node in trail:
+        for sidx, node in enumerate(trail):
             seq = topology.node_sequence(node)
             sequences[seq][tidx] = node
+            if sidx == (len(trail) - 1):
+                support_nodes.append(node)
 
-    origin_nodes = np.asarray(origin_nodes)
-
-    support_nodes = np.asarray(list(topology.support_nodes()))
+    origin_nodes = np.asarray(origin_nodes).astype(int)
+    support_nodes = np.asarray(support_nodes).astype(int)
 
     return cls(
         nodes=nodes,
