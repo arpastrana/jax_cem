@@ -17,7 +17,7 @@ def form_from_eqstate(structure, eqstate):
         form.add_node(Node(int(node)))
 
     # assign support nodes
-    for node in structure.sequences[-1]:
+    for node in structure.support_nodes:
         form.node_attribute(int(node), "type", "support")
 
     # add edges
@@ -41,17 +41,18 @@ def form_update(form, structure, eqstate):
     """
     xyz = eqstate.xyz.tolist()
     loads = eqstate.loads.tolist()
-    lengths = eqstate.lengths.tolist()
     reactions = eqstate.reactions.tolist()
+    lengths = eqstate.lengths.tolist()
     forces = eqstate.forces.tolist()
 
     # update q values and lengths on edges
-    for idx, edge in enumerate(structure.edges):
+    for edge in structure.edges:
+        idx = structure.edge_index[tuple(edge)]
         form.edge_attribute(edge, name="force", value=forces[idx].pop())
         form.edge_attribute(edge, name="lengths", value=lengths[idx].pop())
 
     # update residuals on nodes
-    for idx, node in enumerate(structure.nodes):
-        form.node_attributes(node, "xyz", xyz[idx])
-        form.node_attributes(node, ["rx", "ry", "rz"], reactions[idx])
-        form.node_attributes(node, ["qx", "qy", "qz"], loads[idx])
+    for node in structure.nodes:
+        form.node_attributes(node, "xyz", xyz[node])
+        form.node_attributes(node, ["rx", "ry", "rz"], reactions[node])
+        form.node_attributes(node, ["qx", "qy", "qz"], loads[node])

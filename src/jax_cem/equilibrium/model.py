@@ -379,7 +379,6 @@ def model_from_topology(cls, topology):
     topology : `compas_cem.diagrams.TopologyDiagram`
         A valid topology diagram.
     """
-
     nodes = sorted(list(topology.nodes()))
     edges = list(topology.edges())
 
