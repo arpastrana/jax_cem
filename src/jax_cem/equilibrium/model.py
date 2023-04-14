@@ -5,6 +5,8 @@ import jax.numpy as jnp
 
 from jax import vmap
 
+from jax.lax import scan
+
 import equinox as eqx
 from equinox.internal import while_loop
 
@@ -108,7 +110,7 @@ class EquilibriumModel(eqx.Module):
         def cond_fn(val):
             xyz, xyz_last = val
             # calculate residual distance
-            residual = jnp.sum(jnp.linalg.norm(xyz_last[:-1] - xyz[:-1], axis=1))
+            residual = distance(xyz, xyz_last)
             # if residual distance larger than threshold, continue iterating
             return residual > eta
 
@@ -135,11 +137,11 @@ class EquilibriumModel(eqx.Module):
 
         # reaction forces
         reactions = jnp.zeros((topology.number_of_nodes(), 3))
-        reactions = reactions.at[topology.support_nodes, :].set(residuals[-1])
+        reactions = reactions.at[topology.support_nodes, :].set(residuals[-1, :])
 
         # edge forces
         forces = jnp.where(self.forces != 0.0, self.forces, 0.0)
-        forces = self.edges_force(topology, residuals[:-1], lengths[:-1], forces)
+        forces = self.edges_force(topology, residuals[:-1, :], lengths[:-1, :], forces)
 
         # edge lengths
         lengths = self.edges_length(topology, xyz)
@@ -154,23 +156,34 @@ class EquilibriumModel(eqx.Module):
         """
         Calculate static equilibrium on a structure.
         """
-        xyz_seq = self.xyz[topology.origin_nodes, :]
-        residuals_seq = jnp.zeros((topology.number_of_trails(), 3))
 
-        residuals_seqs = []
-        lengths_seqs = []
+        def init_state():
+            """
+            Create an initial scan state
+            """
+            xyz_seq = self.xyz[topology.origin_nodes, :]
+            residuals_seq = jnp.zeros((topology.number_of_trails(), 3))
 
-        for i, sequence in enumerate(topology.sequences):
-            # update position matrix
-            xyz = xyz.at[sequence, :].set(xyz_seq)
+            return xyz, xyz_seq, residuals_seq
 
-            # sequence equilibrium
-            state_seq = self.sequence_equilibrium(topology, sequence, xyz, residuals_seq, indirect)
+        def sequences_equilibrium(state, sequence):
+            """
+            Compute static equilibrium on a sequence of nodes in a scan-compatible way.
+            """
+            _xyz, xyz_seq, residuals_seq = state
+            _xyz = _xyz.at[sequence, :].set(xyz_seq)
+            state_seq = self.sequence_equilibrium(topology, sequence, _xyz, residuals_seq, indirect)
             xyz_seq, residuals_seq, lengths_seq = state_seq
+            state = _xyz, xyz_seq, residuals_seq
 
-            # store
-            residuals_seqs.append(residuals_seq)
-            lengths_seqs.append(lengths_seq)
+            return state, (residuals_seq, lengths_seq)
+
+        # create initial scan state
+        state = init_state()
+
+        # compute static equilibrium in the structure by scanning a function over all sequences
+        state, (residuals_seqs, lengths_seqs) = scan(sequences_equilibrium, state, topology.sequences)
+        xyz, _, _ = state
 
         return xyz, residuals_seqs, lengths_seqs
 
