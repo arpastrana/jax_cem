@@ -1,6 +1,7 @@
 import pytest
 import compas
 import jax_cem
+import compas_cem
 import math
 import numpy
 
@@ -29,6 +30,7 @@ def pytest_ignore_collect(path):
 # Fixtures
 # ==============================================================================
 
+
 @pytest.fixture(autouse=True)
 def add_compas(doctest_namespace):
     doctest_namespace["compas"] = compas
@@ -37,6 +39,11 @@ def add_compas(doctest_namespace):
 @pytest.fixture(autouse=True)
 def add_jax_cem(doctest_namespace):
     doctest_namespace["jax_cem"] = jax_cem
+
+
+@pytest.fixture(autouse=True)
+def add_compas_cem(doctest_namespace):
+    doctest_namespace["compas_cem"] = compas_cem
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +72,8 @@ def compression_strut():
     topology.add_support(NodeSupport(0))
     # add loads at the unsupported edge
     topology.add_load(NodeLoad(1, [0, -1.0, 0.0]))
+    # build trails
+    topology.build_trails()
 
     return topology
 
@@ -90,6 +99,8 @@ def tension_chain():
     topology.add_support(NodeSupport(3))
     # add load
     topology.add_load(NodeLoad(0, [-1, 0, 0]))
+    # build trails
+    topology.build_trails()
 
     return topology
 
@@ -115,6 +126,8 @@ def compression_chain():
     topology.add_support(NodeSupport(3))
     # add load
     topology.add_load(NodeLoad(0, [1, 0, 0]))
+    # build trails
+    topology.build_trails()
 
     return topology
 
@@ -145,6 +158,9 @@ def threebar_funicular():
     # add loads
     topology.add_load(NodeLoad(1, [0.0, -1.0, 0.0]))
     topology.add_load(NodeLoad(2, [0.0, -1.0, 0.0]))
+
+    # build trails
+    topology.build_trails()
 
     return topology
 
@@ -189,6 +205,9 @@ def braced_tower_2d():
 
     topology.add_load(NodeLoad(2, load))
     topology.add_load(NodeLoad(5, load))
+
+    # build trails
+    topology.build_trails()
 
     return topology
 
@@ -289,5 +308,67 @@ def unsupported_topology():
 
     # add load
     topology.add_load(NodeLoad(0, [0, -1.0, 0.0]))
+
+    return topology
+
+
+@pytest.fixture
+def topology_shifted_sequences():
+    """
+    A topology with shifted sequences of two different lengths.
+    """
+    points = [
+        (0, [1.0, 0.0, 0.0]),
+        (1, [1.0, -1.0, 0.0]),
+        (2, [1.0, -2.0, 0.0]),
+        (3, [1.0, -3.0, 0.0]),
+        (4, [2.0, 0.0, 0.0]),
+        (5, [2.0, -1.0, 0.0]),
+        (6, [2.0, -2.0, 0.0]),
+        (7, [2.0, -3.0, 0.0]),
+    ]
+
+    # key: plane
+    trail_edges = {
+        (0, 1): ([0.0, -1.0, 0.0], [0.0, -1.0, 0.0]),
+        (1, 2): ([0.0, -2.0, 0.0], [0.0, -1.0, 0.0]),
+        (2, 3): ([0.0, -3.0, 0.0], [0.0, -1.0, 0.0]),
+    }
+
+    deviation_edges = [(0, 4), (1, 5), (2, 6), (3, 7)]
+
+    # create topology diagram
+    topology = TopologyDiagram()
+
+    for key, point in points:
+        topology.add_node(Node(key, point))
+
+    for (u, v), plane in trail_edges.items():
+        topology.add_edge(TrailEdge(u, v, length=-1.0, plane=plane))
+
+    for u, v in deviation_edges:
+        topology.add_edge(DeviationEdge(u, v, force=-2.0))
+
+    topology.add_support(NodeSupport(3))
+
+    for node in range(4):
+        topology.add_load(NodeLoad(0, [0.0, -1.0, 0.0]))
+
+    # build trails swith auxiliary trails
+    topology.build_trails(auxiliary_trails=True)
+
+    # shift auxiliary trails (only one iteration is needed)
+    for node in topology.origin_nodes():
+        edges = topology.connected_edges(node)
+        for edge in edges:
+            if not topology.is_indirect_deviation_edge(edge):
+                continue
+            u, v = edge
+            node_other = u if node != u else v
+            sequence = topology.node_sequence(node)
+            sequence_other = topology.node_sequence(node_other)
+
+            if sequence_other != sequence:
+                topology.shift_trail(node, sequence_other)
 
     return topology

@@ -114,6 +114,70 @@ def bt2_out():
     return output
 
 
+def tss_out():
+    """Static equilibrium results of topology shifted sequences."""
+    output = {}
+    output["xyz"] = {
+        0: [1.0, 0.0, 0.0],
+        1: [-1.0, -1.0, 0.0],
+        2: [-5.0, -2.0, 0.0],
+        3: [-11.0, -3.0, 0.0],
+        4: [2.0, 0.0, 0.0],
+        5: [2.0, -1.0, 0.0],
+        6: [2.0, -2.0, 0.0],
+        7: [2.0, -3.0, 0.0],
+        8: [3.0, 0.0, 0.0],
+        9: [3.0, -1.0, 0.0],
+        10: [3.0, -2.0, 0.0],
+        11: [3.0, -3.0, 0.0],
+    }
+
+    output["force"] = {
+        (0, 1): -2.23606797749979,
+        (0, 4): -2.0,
+        (1, 2): -4.123105625617661,
+        (1, 5): -2.0,
+        (2, 3): -6.082762530298219,
+        (2, 6): -2.0,
+        (3, 7): -2.0,
+        (4, 8): -2.0,
+        (5, 9): -2.0,
+        (6, 10): -2.0,
+        (7, 11): -2.0,
+    }
+
+    output["length"] = {
+        (0, 1): 2.23606797749979,
+        (0, 4): 1.0,
+        (1, 2): 4.123105625617661,
+        (1, 5): 3.0,
+        (2, 3): 6.082762530298219,
+        (2, 6): 7.0,
+        (3, 7): 13.0,
+        (4, 8): 1.0,
+        (5, 9): 1.0,
+        (6, 10): 1.0,
+        (7, 11): 1.0,
+    }
+
+    output["residual"] = {
+        0: [0.0, 0.0, 0.0],
+        1: [0.0, 0.0, 0.0],
+        2: [0.0, 0.0, 0.0],
+        3: [8.0, 1.0, -0.0],
+        4: [0.0, 0.0, 0.0],
+        5: [0.0, 0.0, 0.0],
+        6: [0.0, 0.0, 0.0],
+        7: [0.0, 0.0, 0.0],
+        8: [-2.0, -0.0, -0.0],
+        9: [-2.0, -0.0, -0.0],
+        10: [-2.0, -0.0, -0.0],
+        11: [-2.0, -0.0, -0.0],
+    }
+
+    return output
+
+
 @pytest.mark.parametrize(
     "topology, output",
     [
@@ -122,6 +186,7 @@ def bt2_out():
         (pytest.lazy_fixture("braced_tower_2d"), bt2_out()),
         (pytest.lazy_fixture("tension_chain"), tc_out()),
         (pytest.lazy_fixture("compression_chain"), cc_out()),
+        (pytest.lazy_fixture("topology_shifted_sequences"), tss_out()),
     ],
 )
 def test_force_equilibrium_jax_output(topology, output):
@@ -132,8 +197,6 @@ def test_force_equilibrium_jax_output(topology, output):
     edge_force_out = output["force"]
     edge_length_out = output["length"]
     support_residual_out = output["residual"]
-
-    topology.build_trails()
 
     structure = EquilibriumStructure.from_topology_diagram(topology)
     model = EquilibriumModel.from_topology_diagram(topology)
