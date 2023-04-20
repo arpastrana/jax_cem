@@ -172,7 +172,7 @@ class EquilibriumModel(eqx.Module):
             """
             _xyz, xyz_seq, residuals_seq = state
             _xyz = _xyz.at[sequence, :].set(xyz_seq)
-            state_seq = self.sequence_equilibrium(topology, sequence, _xyz, residuals_seq, indirect)
+            state_seq = self.sequence_equilibrium(topology, sequence, _xyz, xyz_seq, residuals_seq, indirect)
             xyz_seq, residuals_seq, lengths_seq = state_seq
             state = _xyz, xyz_seq, residuals_seq
 
@@ -187,15 +187,12 @@ class EquilibriumModel(eqx.Module):
 
         return xyz, residuals_seqs, lengths_seqs
 
-    def sequence_equilibrium(self, topology, sequence, xyz, residuals_seq, indirect):
+    def sequence_equilibrium(self, topology, sequence, xyz, xyz_seq, residuals_seq, indirect):
         """
         Compute static equilibrium on all the nodes of a sequence.
         """
-        # node positions
-        xyz_seq = xyz[sequence, :]
-
         # padding mask
-        is_sequence_padded = np.reshape(sequence, (-1, 1)) < 0
+        is_sequence_padded = jnp.reshape(sequence, (-1, 1)) < 0
 
         # node residuals
         residuals_new = self.nodes_equilibrium(topology, sequence, xyz[:-1], residuals_seq, indirect)
@@ -414,11 +411,14 @@ def model_from_topology(cls, topology):
             plane = topology.edge_plane(edge)
             if plane is not None:
                 origin, normal = plane
-                planes[u, :] = origin + normal
+                plane = []
+                plane.extend(origin)
+                plane.extend(normal)
+                planes[u, :] = plane
             else:
                 length = topology.edge_length_2(edge)
                 if not length:
-                    raise ValueError(f"No length defined on edge {edge}")
+                    raise ValueError(f"No length defined on trail edge {edge}")
                 lengths[u, :] = length
 
     planes = jnp.asarray(planes)
