@@ -82,7 +82,7 @@ class EquilibriumStructure(eqx.Module):
                 index = self.edge_index.get(edge, self.edge_index.get((edge[1], edge[0]), -1))
                 sequence.append(index)
             sequences.append(sequence)
-        return jnp.asarray(sequences)
+        return np.asarray(sequences)
 
     def number_of_nodes(self):
         """

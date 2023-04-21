@@ -140,8 +140,7 @@ class EquilibriumModel(eqx.Module):
         reactions = reactions.at[topology.support_nodes, :].set(residuals[-1, :])
 
         # edge forces
-        forces = jnp.where(self.forces != 0.0, self.forces, 0.0)
-        forces = self.edges_force(topology, residuals[:-1, :], lengths[:-1, :], forces)
+        forces = self.edges_force(topology, residuals[:-1, :], lengths[:-1, :], self.forces)
 
         # edge lengths
         lengths = self.edges_length(topology, xyz)
@@ -312,11 +311,14 @@ class EquilibriumModel(eqx.Module):
         """
         The forces in the edges in a topology diagram.
         """
+        sequences_edges = topology.sequences_edges.ravel()
+        is_sequence_unpadded = sequences_edges != -1
+        sequences_edges = sequences_edges[is_sequence_unpadded]
+
         trail_forces = self.trails_force(residuals, lengths)
+        trail_forces = trail_forces[is_sequence_unpadded]
 
-        sequences_edges = topology.sequences_edges
-
-        return forces.at[sequences_edges.ravel(), :].set(trail_forces)
+        return forces.at[sequences_edges, :].set(trail_forces)
 
     def trails_force(self, residuals, lengths):
         """
