@@ -26,7 +26,6 @@ class EquilibriumStructure(eqx.Module):
     """
     The attributed, undirected graph describing a pin-jointed bar structure.
     """
-
     nodes: jax.Array  # nodes
     edges: jax.Array  # pairs of nodes
     origin_nodes: jax.Array  # nodes
@@ -40,6 +39,7 @@ class EquilibriumStructure(eqx.Module):
     connectivity: jax.Array
     incidence: jax.Array
     sequences_edges: jax.Array
+    sequences_edges_indices: jax.Array
 
     def __init__(
         self, nodes, edges, origin_nodes, support_nodes, trail_edges, deviation_edges, indirect_edges, sequences
@@ -48,8 +48,8 @@ class EquilibriumStructure(eqx.Module):
         self.edges = edges
         self.origin_nodes = origin_nodes
         self.support_nodes = support_nodes
-        self.trail_edges = trail_edges
-        self.deviation_edges = deviation_edges
+        self.trail_edges = trail_edges  # a boolean mask
+        self.deviation_edges = deviation_edges  # a boolean mask
         self.indirect_edges = indirect_edges
         self.sequences = sequences
 
@@ -58,6 +58,7 @@ class EquilibriumStructure(eqx.Module):
         self.connectivity = jnp.asarray(connectivity_matrix(self.edges))
         self.incidence = self._incidence()
         self.sequences_edges = self._sequences_edges()
+        self.sequences_edges_indices = self._sequences_edges_indices()
 
     def _incidence(self):
         incidence = np.zeros_like(self.connectivity)
@@ -73,6 +74,17 @@ class EquilibriumStructure(eqx.Module):
 
         return jnp.asarray(incidence)
 
+    def _sequences_edges_indices(self):
+        counts = []
+        count = 0
+        for sequence in self.sequences_edges:
+            for idx in sequence:
+                if idx >= 0:
+                    counts.append(count)
+                count += 1
+
+        return np.asarray(counts).astype(int)
+
     def _sequences_edges(self):
         sequences = []
         for sequences_pair in pairwise(self.sequences):
@@ -82,7 +94,8 @@ class EquilibriumStructure(eqx.Module):
                 index = self.edge_index.get(edge, self.edge_index.get((edge[1], edge[0]), -1))
                 sequence.append(index)
             sequences.append(sequence)
-        return np.asarray(sequences)
+
+        return np.asarray(sequences).astype(int)
 
     def number_of_nodes(self):
         """
@@ -95,6 +108,20 @@ class EquilibriumStructure(eqx.Module):
         The number of edges in the graph.
         """
         return len(self.edges)
+
+    def number_of_trail_edges(self):
+        """
+        The number of trail edges in the graph.
+        """
+        # return self.num_trail_edges
+        return int(np.sum(self.trail_edges))
+
+    def number_of_deviation_edges(self):
+        """
+        The number of deviation edges in the graph.
+        """
+        # return self.num_deviation_edges
+        return int(np.sum(self.deviation_edges))
 
     def number_of_trails(self):
         """
@@ -167,7 +194,7 @@ class EquilibriumStructureFrozen(eqx.Module):
 
 
 @dataclass
-class EquilibriumStructure2:
+class EquilibriumStructureDataclass:
     """
     The attributed, undirected graph describing a pin-jointed bar structure.
     """
@@ -336,7 +363,7 @@ def structure_from_topology(cls, topology):
         if topology.is_trail_edge(edge):
             val = 1.0
         trail_edges.append(val)
-    trail_edges = np.asarray(trail_edges).astype(int)
+    trail_edges = np.asarray(trail_edges).astype(float)
 
     # deviation edges
     deviation_edges = np.logical_not(trail_edges).astype(float)

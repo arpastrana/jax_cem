@@ -35,7 +35,6 @@ class EquilibriumModel(eqx.Module):
     planes: `jnp.array`
         The projection planes of trail edges of a topology diagram.
     """
-
     xyz: jax.Array  # N x 3 or A x 3?
     loads: jax.Array  # N x 3
     lengths: jax.Array  # N x 6?
@@ -133,7 +132,7 @@ class EquilibriumModel(eqx.Module):
         Put together an equilibrium state object.
         """
         # node positions
-        xyz = xyz[:-1]
+        xyz = xyz[:-1]  # NOTE: remove dummy last row created in __call__()
 
         # reaction forces
         reactions = jnp.zeros((topology.number_of_nodes(), 3))
@@ -165,7 +164,7 @@ class EquilibriumModel(eqx.Module):
 
             return xyz, xyz_seq, residuals_seq
 
-        def sequences_equilibrium(state, sequence):
+        def sequence_equilibrium(state, sequence):
             """
             Compute static equilibrium on a sequence of nodes in a scan-compatible way.
             """
@@ -181,7 +180,7 @@ class EquilibriumModel(eqx.Module):
         state = init_state()
 
         # compute static equilibrium in the structure by scanning a function over all sequences
-        state, (residuals_seqs, lengths_seqs) = scan(sequences_equilibrium, state, topology.sequences)
+        state, (residuals_seqs, lengths_seqs) = scan(sequence_equilibrium, state, topology.sequences)
         xyz, _, _ = state
 
         return xyz, residuals_seqs, lengths_seqs
@@ -198,6 +197,8 @@ class EquilibriumModel(eqx.Module):
         residuals_seq = jnp.where(is_sequence_padded, residuals_seq, residuals_new)
 
         # trail edge lengths
+        # NOTE: Probably inefficient to pre-compute both versions of length
+        # Perhaps moving length functions to arguments of jnp.where would skip that evaluation?
         lengths_plane = self.nodes_length_plane(topology, sequence, xyz_seq, residuals_seq)
         lengths_signed = self.lengths[sequence].ravel()
         lengths_seq = jnp.where(lengths_signed != 0.0, lengths_signed, lengths_plane)
@@ -311,22 +312,50 @@ class EquilibriumModel(eqx.Module):
         """
         The forces in the edges in a topology diagram.
         """
-        sequences_edges = topology.sequences_edges.ravel()
-        is_sequence_unpadded = sequences_edges != -1
-        sequences_edges = sequences_edges[is_sequence_unpadded]
+        # print(f"{residuals.shape=}{lengths.shape=}{forces.shape=}")
+        sequences_edges_flat = topology.sequences_edges.ravel()
+        # print(f"{sequences_edges_flat=}")
+        indices = topology.sequences_edges_indices
+        # print(f"{indices=}")
+        # print(f"{type(sequences_edges_flat)}")
+        # print(f"Seq edges ravel in edges force shape: {sequences_edges_flat.shape=}")
+
+        # is_sequence_unpadded = sequences_edges < 0
+        # trail_sequences_indices = jnp.flatnonzero(sequences_edges_flat >= 0,
+        #                                          size=topology.number_of_trail_edges())
+        # print(f"Trail indices: {trail_sequences_indices=}")
 
         trail_forces = self.trails_force(residuals, lengths)
-        trail_forces = trail_forces[is_sequence_unpadded]
+        # print(f"Trail forces shape: {trail_forces.shape=}")
+        # print(f"Trail forces: {trail_forces=}")
+        # trail_forces = jnp.where(sequences_edges_flat < 0, 0.0, trail_forces.ravel())
+        # print(f"Trail forces whereabouted: {trail_forces=}")
+        # print(f"Trail forces sliced shape: {trail_forces.shape=}")
+        # raise
+        # print(f"Seq edges corrected in edges force: {trail_indices=}")
 
-        return forces.at[sequences_edges, :].set(trail_forces)
+
+        # print(f"Forces: {forces=}")
+        # trail_indices = sequences_edges_flat[trail_sequences_indices]
+        # trail_forces = jnp.reshape(trail_forces, (-1, 1))
+        # print(f"Trail forces: {trail_forces=}")
+        trail_forces = trail_forces[indices]
+        # print(f"Trail forces: {trail_forces=}")
+        trail_indices = sequences_edges_flat[indices]
+        forces_new = forces.at[trail_indices, :].set(trail_forces)
+        # print(f"Forces new: {forces_new=}")
+        # raise
+        return forces_new
+        # return forces.at[sequences_edges, :].set(trail_forces)
 
     def trails_force(self, residuals, lengths):
         """
         The force in the trail edges of a topology diagram.
         """
         residuals = jnp.concatenate(residuals)
-        lengths = jnp.reshape(jnp.concatenate(lengths), (-1, 1))
         forces = self.trail_force(residuals)
+
+        lengths = jnp.reshape(jnp.concatenate(lengths), (-1, 1))
 
         return jnp.copysign(forces, lengths)
 
