@@ -10,6 +10,7 @@ from jax import jit
 
 from compas.colors import Color
 from compas.geometry import Translation
+from compas.geometry import Point
 
 from compas_cem.diagrams import TopologyDiagram
 
@@ -92,14 +93,6 @@ for u, v in deviation_edges:
     topology.add_edge(DeviationEdge(u, v, force=force))
 
 # ------------------------------------------------------------------------------
-# Add Indirect Deviation Edges
-# ------------------------------------------------------------------------------
-
-# topology.add_edge(DeviationEdge(1, 5, force=1.0))
-# topology.add_edge(DeviationEdge(1, 3, force=1.0))
-# topology.add_edge(DeviationEdge(2, 4, force=1.0))
-
-# ------------------------------------------------------------------------------
 # Set Supports Nodes
 # ------------------------------------------------------------------------------
 
@@ -109,10 +102,8 @@ topology.add_support(NodeSupport(3))
 # Add Loads
 # ------------------------------------------------------------------------------
 
-topology.add_load(NodeLoad(0, load))
-topology.add_load(NodeLoad(1, load))
-topology.add_load(NodeLoad(2, load))
-topology.add_load(NodeLoad(3, load))
+for node in range(4):
+    topology.add_load(NodeLoad(0, [0.0, -1.0, 0.0]))
 
 # ------------------------------------------------------------------------------
 # Build trails automatically
@@ -126,7 +117,7 @@ topology.build_trails(auxiliary_trails=True)
 
 for i in range(100):
     if topology.number_of_indirect_deviation_edges() == 0:
-        print("No indirect deviation edges!")
+        print(f"No indirect deviation edges after {i} iterations!")
         break
     for node in topology.origin_nodes():
         edges = topology.connected_edges(node)
@@ -145,7 +136,19 @@ for i in range(100):
 # Compute a state of static equilibrium with COMPAS CEM
 # ------------------------------------------------------------------------------
 
-form = static_equilibrium(topology)
+form = static_equilibrium(topology, tmax=1)
+
+# for node in form.nodes():
+#     print(f"{node}: {form.node_coordinates(node)}")
+
+# for node in form.nodes():
+#     print(f'{node}: {form.node_attributes(node, names=["rx", "ry", "rz"])}')
+
+# for edge in form.edges():
+#     print(f'{edge}: {form.edge_attribute(edge, "length")}')
+
+# for edge in form.edges():
+#     print(f'{edge}: {form.edge_attribute(edge, "force")}')
 
 # ------------------------------------------------------------------------------
 # Compute a state of static equilibrium with JAX CEM
@@ -153,26 +156,34 @@ form = static_equilibrium(topology)
 
 structure = EquilibriumStructure.from_topology_diagram(topology)
 model = EquilibriumModel.from_topology_diagram(topology)
-eqstate = model(structure)
 
-# form = EquilibriumForm(structure, eqstate)
-# form_jax = form_from_eqstate(structure, eqstate)
+from jax import jit
+from equinox import filter_jit as jit
 
-# # ------------------------------------------------------------------------------
-# # Tests
-# # ------------------------------------------------------------------------------
+# model = jit(model)  # , static_argnums=(1, ))
+eqstate = model(structure, tmax=1)
+# print(eqstate.xyz)
+
+# form = EquilibriumForm(structure, eqstate)  # an idea for the future
+form_jax = form_from_eqstate(structure, eqstate)
+
+# ------------------------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------------------------
 
 xyz_compas = np.asarray([form.node_coordinates(node) for node in structure.nodes])
 reactions_compas = np.asarray([form.reaction_force(node) for node in structure.nodes])
 lengths_compas = np.asarray([form.edge_length(*edge) for edge in structure.edges])
 forces_compas = np.asarray([form.edge_force(edge) for edge in structure.edges])
 
-assert np.allclose(xyz_compas, eqstate.xyz), f"\n{xyz_compas}\n{eqstate.xyz}"
-# assert np.allclose(reactions_compas, eqstate.reactions)
-# assert np.allclose(lengths_compas, eqstate.lengths.ravel()), f"{lengths_compas}\n{eqstate.lengths}"
-# assert np.allclose(forces_compas, eqstate.forces.ravel()), f"\n{forces_compas}\n{eqstate.forces}"
+print(f"distance jax to compas: {np.linalg.norm(eqstate.xyz - xyz_compas):.4f}")
 
-# print("happy ever after")
+assert np.allclose(xyz_compas, eqstate.xyz), f"\n{xyz_compas}\n{eqstate.xyz}"
+assert np.allclose(reactions_compas, eqstate.reactions)
+assert np.allclose(lengths_compas, eqstate.lengths.ravel()), f"{lengths_compas}\n{eqstate.lengths}"
+assert np.allclose(forces_compas, eqstate.forces.ravel()), f"\n{forces_compas}\n{eqstate.forces}"
+
+print("happy ever after")
 
 # ------------------------------------------------------------------------------
 # Plot results
@@ -181,16 +192,18 @@ assert np.allclose(xyz_compas, eqstate.xyz), f"\n{xyz_compas}\n{eqstate.xyz}"
 if plot:
     plotter = Plotter(figsize=(12, 8))
 
+    plotter.add(Point(2, -3, 0))
+
     # add topology diagram to scene
-    artist = plotter.add(topology, nodesize=0.2, nodetext="sequence", nodecolor="sequence", show_nodetext=True)
+    # artist = plotter.add(topology, nodesize=0.2, nodetext="sequence", nodecolor="sequence", show_nodetext=False)
 
     # add shifted form diagram to the scene
     form = form.transformed(Translation.from_vector([0.0, -5.0, 0.0]))
-    plotter.add(form, nodesize=0.2, show_edgetext=False, edgetext="key")
+    plotter.add(form, nodesize=0.2, show_edgetext=False, edgetext="key", show_nodetext=True)
 
     # add shifted form diagram to the scene
-    # form_jax = form_jax.transformed(Translation.from_vector([0.0, -1.0, 0.0]))
-    # plotter.add(form_jax, nodesize=0.2, edgewidth=2.0, show_edgetext=True, edgetext="key")
+    form_jax = form_jax.transformed(Translation.from_vector([0.0, 0.0, 0.0]))
+    plotter.add(form_jax, nodesize=0.2, show_edgetext=False, edgetext="key", show_nodetext=True)
 
     # show plotter contents
     plotter.zoom_extents()
