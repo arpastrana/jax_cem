@@ -62,15 +62,13 @@ IN_NET = os.path.abspath(os.path.join(HERE, "data/net_3d.json"))
 
 network = FDNetwork.from_json(IN_NET)
 topology = TopologyDiagram.from_json(IN_DECK)
+assert topology.number_of_indirect_deviation_edges() == 0
 
 # ------------------------------------------------------------------------------
 # Manipulate topology
 # ------------------------------------------------------------------------------
 
 network.edges_forcedensities(q=q0)
-
-
-print(f"{topology.number_of_indirect_deviation_edges()=}")
 
 # ------------------------------------------------------------------------------
 # Equilibrium structs
@@ -257,6 +255,7 @@ if OPTIMIZE:
     # split model into differentiable and static submodels
     diff_model, static_model = eqx.partition(model, filter_spec)
 
+    # define parameter bounds
     bound_low = eqx.tree_at(lambda tree: (tree.cem.forces,
                                           tree.fdm.q),
                             diff_model,
@@ -410,13 +409,13 @@ if PLOT:
     plotter = PlotterFD(figsize=(8, 5), dpi=200)
 
     # plotter.add(topology)
-    for _network in [network, topology]:
-        nodes, edges = _network.to_nodes_and_edges()
-        _network = Network.from_nodes_and_edges(nodes, edges)
-        plotter.add(_network,
-                    show_nodes=False,
-                    edgewidth=0.5,
-                    edgecolor={edge: Color.grey() for edge in _network.edges()})
+    # for _network in [network, topology]:
+    #     nodes, edges = _network.to_nodes_and_edges()
+    #     _network = Network.from_nodes_and_edges(nodes, edges)
+    #     plotter.add(_network,
+    #                 show_nodes=False,
+    #                 edgewidth=0.5,
+    #                 edgecolor={edge: Color.grey() for edge in _network.edges()})
 
     for xyzs in xyz_ce_target, fd_xyz_target:
         for xyz in xyzs:
@@ -434,7 +433,7 @@ if PLOT:
     plotter.add(network_opt,
                 nodesize=2,
                 edgecolor="force",
-                show_reactions=True,
+                show_reactions=False,
                 show_loads=False,
                 edgewidth=(1., 3.),
                 show_edgetext=False,
