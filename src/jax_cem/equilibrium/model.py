@@ -312,41 +312,16 @@ class EquilibriumModel(eqx.Module):
         """
         The forces in the edges in a topology diagram.
         """
-        # print(f"{residuals.shape=}{lengths.shape=}{forces.shape=}")
-        sequences_edges_flat = topology.sequences_edges.ravel()
-        # print(f"{sequences_edges_flat=}")
-        indices = topology.sequences_edges_indices
-        # print(f"{indices=}")
-        # print(f"{type(sequences_edges_flat)}")
-        # print(f"Seq edges ravel in edges force shape: {sequences_edges_flat.shape=}")
-
-        # is_sequence_unpadded = sequences_edges < 0
-        # trail_sequences_indices = jnp.flatnonzero(sequences_edges_flat >= 0,
-        #                                          size=topology.number_of_trail_edges())
-        # print(f"Trail indices: {trail_sequences_indices=}")
-
         trail_forces = self.trails_force(residuals, lengths)
-        # print(f"Trail forces shape: {trail_forces.shape=}")
-        # print(f"Trail forces: {trail_forces=}")
-        # trail_forces = jnp.where(sequences_edges_flat < 0, 0.0, trail_forces.ravel())
-        # print(f"Trail forces whereabouted: {trail_forces=}")
-        # print(f"Trail forces sliced shape: {trail_forces.shape=}")
-        # raise
-        # print(f"Seq edges corrected in edges force: {trail_indices=}")
 
-
-        # print(f"Forces: {forces=}")
-        # trail_indices = sequences_edges_flat[trail_sequences_indices]
-        # trail_forces = jnp.reshape(trail_forces, (-1, 1))
-        # print(f"Trail forces: {trail_forces=}")
+        indices = topology.sequences_edges_indices
         trail_forces = trail_forces[indices]
-        # print(f"Trail forces: {trail_forces=}")
+
+        sequences_edges_flat = jnp.ravel(topology.sequences_edges)
         trail_indices = sequences_edges_flat[indices]
         forces_new = forces.at[trail_indices, :].set(trail_forces)
-        # print(f"Forces new: {forces_new=}")
-        # raise
+
         return forces_new
-        # return forces.at[sequences_edges, :].set(trail_forces)
 
     def trails_force(self, residuals, lengths):
         """
