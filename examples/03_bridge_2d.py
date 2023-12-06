@@ -133,8 +133,8 @@ form_opt = opt.solve(topology=topology, algorithm="LBFGS", iters=100, eps=1e-6, 
 structure = EquilibriumStructure.from_topology_diagram(topology0)
 model = EquilibriumModel.from_topology_diagram(topology0)
 eqstate = model(structure)
-print(model.lengths)
-print(model.forces)
+# print(model.lengths)
+# print(model.forces)
 form_jax = form_from_eqstate(structure, eqstate)
 
 # ------------------------------------------------------------------------------
@@ -165,13 +165,13 @@ diff_model, static_model = eqx.partition(model, filter_spec)
 bound_low = eqx.tree_at(lambda tree: (tree.lengths, tree.forces),
                         diff_model,
                         replace=(-3. * np.ones_like(model.forces), -3.0 * np.ones_like(model.lengths)))
-print(bound_low.lengths)
-print(bound_low.forces)
+# print(bound_low.lengths)
+# print(bound_low.forces)
 bound_up = eqx.tree_at(lambda tree: (tree.lengths, tree.forces),
                        diff_model,
                        replace=(17. * np.ones_like(model.forces), 15. * np.ones_like(model.lengths)))
-print(bound_up.lengths)
-print(bound_up.forces)
+# print(bound_up.lengths)
+# print(bound_up.forces)
 
 bounds = (bound_low, bound_up)
 
@@ -193,7 +193,7 @@ diff_model_star, opt_state_star = opt_result
 # evaluate loss function at optimum point
 loss = loss_fn(diff_model_star, static_model, structure, y)
 print(f"{loss=}")
-print(opt_state_star)
+# print(opt_state_star)
 
 # generate optimized compas cem form diagram
 model_star = eqx.combine(diff_model_star, static_model)

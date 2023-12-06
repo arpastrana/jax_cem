@@ -32,10 +32,10 @@ from jax_fdm.visualization import Viewer as ViewerFD
 
 
 VIEW = True
-OPTIMIZE = True  #True
+OPTIMIZE = True  # True
 
 q0 = 2.0
-qmin, qmax = 1e-3, jnp.inf  # 0, 30 cablenet
+qmin, qmax = 1e-3, 50.0  # 0, 30 cablenet
 
 target_length_ratio_fd = 0.9
 
@@ -65,11 +65,21 @@ form = static_equilibrium(topology)
 
 # delete auxiliary trails edges
 deletable_nodes = []
+nodes_cem_residual = []
+
 for edge in topology.edges():
+
     if topology.is_auxiliary_trail_edge(edge):
+
         for node in edge:
             if topology.is_node_support(node):
                 deletable_nodes.append(node)
+            else:
+                nodes_cem_residual.append(node)
+
+for node in topology.origin_nodes():
+    if node not in deletable_nodes:
+        nodes_cem_residual.append(node)
 
 for node in deletable_nodes:
     topology.delete_node(node)
@@ -79,7 +89,9 @@ for node in deletable_nodes:
 # ------------------------------------------------------------------------------
 
 # copy nodes
-nodes_cem_target = []
+nodes_fd_xyz_target = []
+nodes_fd_residual_target = []
+
 gkey_key = network.gkey_key()
 
 for node in topology.nodes():
@@ -88,13 +100,14 @@ for node in topology.nodes():
 
     # node exists in fdm cablenet
     if key:
-        nodes_cem_target.append(key)
+        nodes_fd_residual_target.append(key)
 
         _load = topology.node_load(node)
         network.node_load(key, _load)
+
         # remove supports from cablenet at interface with deck
-        if network.is_node_support(key):
-            network.node_attribute(key, "is_support", False)
+        # if network.is_node_support(key):
+        #    network.node_attribute(key, "is_support", False)
         continue
 
     # node does not exist, then add
@@ -102,11 +115,18 @@ for node in topology.nodes():
     _load = topology.node_load(node)
     network.node_load(node_new, _load)
 
-    if topology.is_node_support(node):
+    # cem deck origin nodes
+    if node in nodes_cem_residual:
         network.node_support(node_new)
-        continue
+        nodes_fd_residual_target.append(node_new)
 
-    nodes_cem_target.append(node_new)
+    # cem chord supports
+    elif topology.is_node_support(node):
+        network.node_support(node_new)
+
+    # cem chord
+    else:
+        nodes_fd_xyz_target.append(node_new)
 
 # copy edges
 gkey_key = network.gkey_key()
@@ -133,38 +153,24 @@ network_opt = network_updated(fd_structure.network, fdq)
 # Optimization
 # ------------------------------------------------------------------------------
 
-# xyz goals
-nodes_xyz_opt = []
-indices_xyz_opt = []
+# residual goals
+indices_residual_opt = []
+for node in nodes_fd_residual_target:
+    index = fd_structure.node_index[node]
+    indices_residual_opt.append(index)
+
+# xyz line goals
+indices_xyz_line_opt = []
 xyz_target = []
 
-nodes_xyz_line_opt = []
-indices_xyz_line_opt = []
-xyz_line_target = []
-
-gkey_key = topology.gkey_key()
-for node in nodes_cem_target:
-
-    xyz = network.node_coordinates(node)
-    key = gkey_key.get(geometric_key(xyz))
-
-    if topology.is_node_origin(key):
-        xyz_target.append(topology.node_coordinates(key))
-
-        nodes_xyz_opt.append(node)
-        index = fd_structure.node_index[node]
-        indices_xyz_opt.append(index)
-    else:
-        xyz_line_target.append(topology.node_coordinates(key))
-
-        nodes_xyz_line_opt.append(node)
-        index = fd_structure.node_index[node]
-        indices_xyz_line_opt.append(index)
+for node in nodes_fd_xyz_target:
+    index = fd_structure.node_index[node]
+    indices_xyz_line_opt.append(index)
+    xyz_target.append(network.node_coordinates(node))
 
 xyz_target_copy = xyz_target[:]
 xyz_target = jnp.asarray(xyz_target)
-xyz_line_target = jnp.asarray(xyz_line_target)
-lines_target = (xyz_line_target, xyz_line_target + jnp.array([0.0, 0.0, 1.0]))
+lines_target = (xyz_target, xyz_target + jnp.array([0.0, 0.0, 1.0]))
 
 # length goals
 indices_fd_length_opt = []
@@ -189,21 +195,27 @@ if OPTIMIZE:
         model = eqx.combine(diff_model, static_model)
         fd_eqstate = model(fd_structure)
 
-        # goal xyz
-        xyz_pred = fd_eqstate.xyz[indices_xyz_opt, :]
-        goal_xyz_fd = jnp.sum((xyz_pred - xyz_target) ** 2)
+        # goals residual
+        residual_pred = fd_eqstate.residuals[indices_residual_opt, :]
+        goal_residual_fd = jnp.sum((residual_pred - 0.0) ** 2)
 
         # goal xyz line
         xyz_line_pred = fd_eqstate.xyz[indices_xyz_line_opt, :]
-        xyz_line_target = vmap(closest_point_on_line)(xyz_line_pred, lines_target)
-        goal_xyz_line_fd = jnp.sum((xyz_line_pred - xyz_line_target) ** 2)
+        xyz_target = vmap(closest_point_on_line)(xyz_line_pred, lines_target)
+        assert xyz_line_pred.shape == xyz_target.shape
+        goal_xyz_line_fd = jnp.sum((xyz_line_pred - xyz_target) ** 2)
 
         # goal length
         lengths_pred_fd = fd_eqstate.lengths[indices_fd_length_opt, :].ravel()
+        assert lengths_pred_fd.shape == fd_lengths_target.shape
         lengths_diff = lengths_pred_fd - fd_lengths_target * target_length_ratio_fd
         goal_length_fd = jnp.sum(lengths_diff ** 2)
 
-        return goal_xyz_fd + goal_xyz_line_fd + goal_length_fd
+        return goal_residual_fd + goal_xyz_line_fd + goal_length_fd
+        # return goal_xyz_line_fd
+        # return goal_xyz_line_fd + goal_length_fd
+        # return goal_residual_fd
+        # return goal_xyz_line_fd + goal_residual_fd
 
     # set tree filtering specification
     filter_spec = jtu.tree_map(lambda _: False, model)
@@ -218,10 +230,21 @@ if OPTIMIZE:
     gkey_key = topology.gkey_key()
     for edge in network.edges():
         edge_topo = [gkey_key.get(geometric_key(network.node_coordinates(node))) for node in edge]
-        # if edge is in topology, can take tension and compression:
+        # if edge is in topology, can take tension or compression depending on initial state:
         if all(edge_topo):
             blow.append(-qmax)
             blup.append(qmax)
+
+            # specialized
+            # _force = form.edge_force(edge_topo)
+            # # compression
+            # if _force <= 0.0:
+            #     blow.append(-qmax)
+            #     blup.append(-qmin)
+            # # tension
+            # else:
+            #     blow.append(qmin)
+            #     blup.append(qmax)
         else:
             blow.append(qmin)
             blup.append(qmax)
@@ -302,11 +325,11 @@ if VIEW:
     for _network in [network]:
         nodes, edges = _network.to_nodes_and_edges()
         _network = Network.from_nodes_and_edges(nodes, edges)
-        viewer.add(_network,
-                   show_points=False,
-                   linewidth=0.5,
-                   linecolor=Color.grey(),
-                   )
+        # viewer.add(_network,
+        #            show_points=False,
+        #            linewidth=0.5,
+        #            linecolor=Color.grey(),
+        #            )
 
     print("\nCablenet with deck")
     network_opt.print_stats()
@@ -318,16 +341,20 @@ if VIEW:
                edgewidth=(0.01, 0.05),
                reactionscale=1.0,
                loadscale=1.0,
-               show_nodes=True,
-               nodecolor=Color.black(),
-               nodesize=0.25,
-               nodes=nodes_xyz_opt,
+               show_nodes=False,
+               nodesize=0.15,
+               nodes=None, # nodes_fd_xyz_target,
+               # nodecolor=Color.black(),
                )
 
-    from compas.geometry import Point
+    from compas.geometry import Point, Line
 
-    for xyz in xyz_target_copy:
+    for node, xyz in zip(nodes_fd_xyz_target, xyz_target_copy):
+
         pt = Point(*xyz)
-        viewer.add(pt, color=Color.lime())
+        viewer.add(pt, color=Color.grey())
+
+        xyz_pred = network_opt.node_coordinates(node)
+        viewer.add(Line(xyz_pred, xyz), color=Color.black())
 
     viewer.show()

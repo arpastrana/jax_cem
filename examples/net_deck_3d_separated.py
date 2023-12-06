@@ -40,7 +40,9 @@ from jax_fdm.visualization import Viewer as ViewerFD
 VIEW = True
 PLOT = False
 RECORD = True
-OPTIMIZE = True
+
+OPTIMIZE_CEM = True
+OPTIMIZE_FDM = True
 
 q0 = 1.0
 qmin, qmax = 1e-3, 30.0
@@ -116,32 +118,6 @@ indices_fdm = []
 for node in nodes_fdm:
     indices_fdm.append(fd_structure.node_index[node])
 
-
-# ------------------------------------------------------------------------------
-# Custom equilibrium model
-# ------------------------------------------------------------------------------
-
-class MixedEquilibriumModel(eqx.Module):
-    """
-    A custom equilibrium model
-    """
-    cem: CEModel
-    fdm: FDModel
-
-    def __call__(self, ce_structure, fd_structure):
-        """
-        Compute a state of static equilibrium.
-        """
-        ce_equilibrium = self.cem(ce_structure, tmax=1)
-        ce_reactions = ce_equilibrium.reactions[indices_cem, :]
-
-        loads = self.fdm.loads.at[indices_fdm, :].set(-ce_reactions)
-        fdm = eqx.tree_at(lambda tree: (tree.loads), self.fdm, replace=(loads))
-        fd_equilibrium = fdm(fd_structure)
-
-        return ce_equilibrium, fd_equilibrium
-
-
 # ------------------------------------------------------------------------------
 # Equilibrium models
 # ------------------------------------------------------------------------------
@@ -149,10 +125,10 @@ class MixedEquilibriumModel(eqx.Module):
 ce_model = CEModel.from_topology_diagram(topology)
 fd_model = FDModel.from_network(network)
 
-model = MixedEquilibriumModel(cem=ce_model, fdm=fd_model)
-ceq, fdq = model(ce_structure, fd_structure)
-
+ceq = ce_model(ce_structure)
 form_opt = form_from_eqstate(ce_structure, ceq)
+
+fdq = fd_model(fd_structure)
 network_opt = network_updated(fd_structure.network, fdq)
 
 # ------------------------------------------------------------------------------
@@ -213,16 +189,16 @@ for edge in network.edges_where({"group": "hangers"}):
 
 fd_lengths_target = jnp.asarray(fd_lengths_target)
 
-if OPTIMIZE:
+if OPTIMIZE_CEM:
 
     # define loss function
     @jit
-    def loss_fn(diff_model, static_model):
+    def ce_loss_fn(diff_model, static_model):
         """
         A loss function.
         """
         model = eqx.combine(diff_model, static_model)
-        ce_eqstate, fd_eqstate = model(ce_structure, fd_structure)
+        ce_eqstate = model(ce_structure)
 
         # cem loss
         xyz_pred = ce_eqstate.xyz[indices_ce_xyz_opt, :]
@@ -235,6 +211,75 @@ if OPTIMIZE:
 
         loss_ce = goal_xyz_ce + goal_res_ce
 
+        return loss_ce
+
+    # set tree filtering specification
+    filter_spec = jtu.tree_map(lambda _: False, ce_model)
+    filter_spec = eqx.tree_at(lambda tree: (tree.forces), filter_spec, replace=(True))
+
+    # split model into differentiable and static submodels
+    ce_diff_model, ce_static_model = eqx.partition(ce_model, filter_spec)
+
+    # define parameter bounds
+    bound_low = eqx.tree_at(lambda tree: (tree.forces), ce_diff_model,
+                            replace=(jnp.ones_like(ce_model.forces) * fmin))
+
+    bound_up = eqx.tree_at(lambda tree: (tree.forces), ce_diff_model,
+                           replace=(jnp.ones_like(ce_model.forces) * fmax)
+                           )
+
+    ce_bounds = (bound_low, bound_up)
+
+    # evaluate loss function at the start
+    ce_loss = ce_loss_fn(ce_diff_model, ce_static_model)
+    print(f"{ce_loss=}")
+
+    # solve optimization problem with scipy
+    print("\n***Optimizing CEM alone with scipy***")
+    optimizer = jaxopt.ScipyBoundedMinimize
+
+    history_cem = []
+
+    def recorder_cem(xk):
+        history_cem.append(xk)
+
+    opt = optimizer(fun=ce_loss_fn,
+                    method="L-BFGS-B",
+                    jit=True,
+                    tol=1e-6,  # 1e-12,
+                    maxiter=5000,
+                    callback=recorder_cem)
+
+    start = time()
+    opt_result = opt.run(ce_diff_model, ce_bounds, ce_static_model)
+    print(f"Opt time: {time() - start:.4f} sec")
+    ce_diff_model_star, ce_opt_state_star = opt_result
+
+    # evaluate loss function at optimum point
+    ce_loss = ce_loss_fn(ce_diff_model_star, ce_static_model)
+    print(f"{ce_loss=}")
+    print(f"{ce_opt_state_star.iter_num=}")
+
+    # generate optimized compas datastructures
+    ce_model_star = eqx.combine(ce_diff_model_star, ce_static_model)
+    ce_eqstate_star = ce_model_star(ce_structure)
+    form_opt = form_from_eqstate(ce_structure, ce_eqstate_star)
+
+# ------------------------------------------------------------------------------
+# Plott loss function
+# ------------------------------------------------------------------------------
+
+if OPTIMIZE_FDM:
+
+    # define loss function
+    @jit
+    def fd_loss_fn(diff_model, static_model):
+        """
+        A loss function.
+        """
+        model = eqx.combine(diff_model, static_model)
+        fd_eqstate = model(fd_structure)
+
         # fd loss
         residuals_pred_fd = fd_eqstate.residuals[indices_fd_res_opt, :]
         goal_res_fd = jnp.sum((residuals_pred_fd - 0.0) ** 2)
@@ -245,81 +290,78 @@ if OPTIMIZE:
 
         loss_fd = goal_res_fd + goal_length_fd
 
-        return loss_ce + loss_fd
+        return loss_fd
+
+    # update applied loads to fd model based on reaction from optimized ce model
+    ce_reactions = ce_eqstate_star.reactions[indices_cem, :]
+    loads = fd_model.loads.at[indices_fdm, :].set(-ce_reactions)
+    fd_model = eqx.tree_at(lambda tree: (tree.loads), fd_model, replace=(loads))
 
     # set tree filtering specification
-    filter_spec = jtu.tree_map(lambda _: False, model)
-    filter_spec = eqx.tree_at(lambda tree: (tree.cem.forces, tree.fdm.q),
-                              filter_spec, replace=(True, True))
+    filter_spec = jtu.tree_map(lambda _: False, fd_model)
+    filter_spec = eqx.tree_at(lambda tree: (tree.q), filter_spec, replace=(True))
 
     # split model into differentiable and static submodels
-    diff_model, static_model = eqx.partition(model, filter_spec)
+    fd_diff_model, fd_static_model = eqx.partition(fd_model, filter_spec)
 
     # define parameter bounds
-    bound_low = eqx.tree_at(lambda tree: (tree.cem.forces,
-                                          tree.fdm.q),
-                            diff_model,
-                            replace=(jnp.ones_like(model.cem.forces) * fmin,
-                                     jnp.ones_like(model.fdm.q) * qmin)
-                            )
+    bound_low = eqx.tree_at(lambda tree: (tree.q), fd_diff_model,
+                            replace=(jnp.ones_like(fd_model.q) * qmin))
 
-    bound_up = eqx.tree_at(lambda tree: (tree.cem.forces,
-                                         tree.fdm.q),
-                           diff_model,
-                           replace=(jnp.ones_like(model.cem.forces) * fmax,
-                                    jnp.ones_like(model.fdm.q) * qmax)
-                           )
+    bound_up = eqx.tree_at(lambda tree: (tree.q), fd_diff_model,
+                           replace=(jnp.ones_like(fd_model.q) * qmax))
 
-    bounds = (bound_low, bound_up)
+    fd_bounds = (bound_low, bound_up)
 
     # evaluate loss function at the start
-    loss = loss_fn(diff_model, static_model)
-    print(f"{loss=}")
+    fd_loss = fd_loss_fn(fd_diff_model, fd_static_model)
+    print(f"{fd_loss=}")
 
     # solve optimization problem with scipy
-    print("\n***Optimizing CEM and FDM jointly with scipy***")
+    print("\n***Optimizing FDM alone with scipy***")
     optimizer = jaxopt.ScipyBoundedMinimize
 
-    history = []
+    history_fdm = []
 
-    def recorder(xk):
-        history.append(xk)
+    def recorder_fdm(xk):
+        history_fdm.append(xk)
 
-    opt = optimizer(fun=loss_fn,
+    opt = optimizer(fun=fd_loss_fn,
                     method="L-BFGS-B",
                     jit=True,
                     tol=1e-6,  # 1e-12,
                     maxiter=5000,
-                    callback=recorder)
+                    callback=recorder_fdm)
 
     start = time()
-    opt_result = opt.run(diff_model, bounds, static_model)
+    opt_result = opt.run(fd_diff_model, fd_bounds, fd_static_model)
     print(f"Opt time: {time() - start:.4f} sec")
-    diff_model_star, opt_state_star = opt_result
+    fd_diff_model_star, fd_opt_state_star = opt_result
 
     # evaluate loss function at optimum point
-    loss = loss_fn(diff_model_star, static_model)
-    print(f"{loss=}")
-    print(f"{opt_state_star.iter_num=}")
+    loss_fd = fd_loss_fn(fd_diff_model_star, fd_static_model)
+    print(f"{loss_fd=}")
+    print(f"{fd_opt_state_star.iter_num=}")
 
     # generate optimized compas datastructures
-    model_star = eqx.combine(diff_model_star, static_model)
-    ce_eqstate_star, fd_eqstate_star = model_star(ce_structure, fd_structure)
-
-    form_opt = form_from_eqstate(ce_structure, ce_eqstate_star)
+    fd_model_star = eqx.combine(fd_diff_model_star, fd_static_model)
+    fd_eqstate_star = fd_model_star(fd_structure)
     network_opt = network_updated(fd_structure.network, fd_eqstate_star)
 
 # ------------------------------------------------------------------------------
-# Plott loss function
+# Plot loss function
 # ------------------------------------------------------------------------------
 
-    print("\nPlotting loss function...")
+    print("\nPlotting loss functions...")
     plt.figure(figsize=(8, 5))
     start_time = time()
 
-    losses = [loss_fn(h_model, static_model) for h_model in history]
+    losses = [ce_loss_fn(h_model, ce_static_model) for h_model in history_cem]
+    plt.plot(losses, label="Loss CEM")
 
-    plt.plot(losses, label="Loss CEM+FDM")
+    losses = [fd_loss_fn(h_model, fd_static_model) for h_model in history_fdm]
+    plt.plot(losses, label="Loss FDM")
+
     plt.xlabel("Optimization iterations")
     plt.ylabel("Loss")
     plt.yscale("log")
@@ -328,6 +370,7 @@ if OPTIMIZE:
     plt.legend()
     print(f"Plotting time: {(time() - start_time):.4} seconds")
     plt.show()
+
 
 # ------------------------------------------------------------------------------
 # Viewer
@@ -400,46 +443,3 @@ if VIEW:
                )
 
     viewer.show()
-
-# ------------------------------------------------------------------------------
-# Plotter
-# ------------------------------------------------------------------------------
-
-if PLOT:
-    plotter = PlotterFD(figsize=(8, 5), dpi=200)
-
-    # plotter.add(topology)
-    # for _network in [network, topology]:
-    #     nodes, edges = _network.to_nodes_and_edges()
-    #     _network = Network.from_nodes_and_edges(nodes, edges)
-    #     plotter.add(_network,
-    #                 show_nodes=False,
-    #                 edgewidth=0.5,
-    #                 edgecolor={edge: Color.grey() for edge in _network.edges()})
-
-    for xyzs in xyz_ce_target, fd_xyz_target:
-        for xyz in xyzs:
-            point = Point(*xyz)
-            plotter.add(point, size=3)
-
-    plotter.add(form_opt,
-                nodesize=2,
-                edgewidth=(1., 3.),
-                edgetext="key",
-                show_edgetext=False,
-                show_reactions=False,
-                show_loads=False)
-
-    plotter.add(network_opt,
-                nodesize=2,
-                edgecolor="force",
-                show_reactions=False,
-                show_loads=False,
-                edgewidth=(1., 3.),
-                show_edgetext=False,
-                show_nodes=True,
-                reactionscale=1.0)
-
-    plotter.zoom_extents()
-    # plotter.save("net_deck_integrated.pdf")
-    plotter.show()
