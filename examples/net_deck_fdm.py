@@ -4,12 +4,10 @@ import matplotlib.pyplot as plt
 
 from math import copysign
 
-from functools import partial
 from time import time
 
-from compas.geometry import Line, Polyline, Point
-from compas.geometry import Translation
-from compas.geometry import scale_vector
+from compas.colors import Color
+from compas.geometry import Line, Point
 from compas.utilities import geometric_key
 
 from compas_cem.diagrams import TopologyDiagram
@@ -30,10 +28,13 @@ from jax_fdm.equilibrium import network_updated
 from jax_fdm.visualization import Plotter as PlotterFD
 
 
+PLOT_LOSS = True
 VIEW = True
 OPTIMIZE = True
-OPT_METHOD = "L-BFGS-B"
+
 q0 = 2.0
+target_length_ratio_fd = 1.0
+target_force_fd = 5
 
 # ------------------------------------------------------------------------------
 # Data
@@ -65,7 +66,11 @@ for node in topology.nodes():
     key = gkey_key.get(geometric_key(xyz))
 
     if key:
-        nodes_cem_target.append(key)
+        # NOTE: If we don't add the nodes at the interface between cablenet and deck
+        # as targets, and don't add a target force on the cable,
+        # then the optimization problem DOES converge
+        # nodes_cem_target.append(key)
+
         if network.is_node_support(key):
             network.node_attribute(key, "is_support", False)
         continue
@@ -87,8 +92,11 @@ for edge in topology.edges():
     u, v = (gkey_key.get(geometric_key(topology.node_coordinates(node))) for node in edge)
     network.add_edge(u, v)
 
-    # q0_signed = copysign(q0, topology.edge_force(edge) or topology.edge_length_2(edge))
-    q0_signed = copysign(q0 * 2.0, topology.edge_force(edge) or topology.edge_length_2(edge))
+    q0_signed = copysign(q0, topology.edge_force(edge) or topology.edge_length_2(edge))
+
+    # NOTE: problem does converge if we double the starting FD for CEM components!
+    # This suggests fdm only is pretty sensitive to initialization
+    # q0_signed = copysign(q0 * 2.0, topology.edge_force(edge) or topology.edge_length_2(edge))
 
     network.edge_forcedensity((u, v), q0_signed)
 
@@ -152,6 +160,22 @@ if OPTIMIZE:
 
     xyz_fd_target = jnp.asarray(fd_xyz_target)
 
+    indices_fd_length_opt = []
+    fd_lengths_target = []
+
+    for edge in network.edges_where({"group": "hangers"}):
+        index = structure.edge_index[edge]
+        indices_fd_length_opt.append(index)
+        length = network.edge_length(*edge)
+        fd_lengths_target.append(length)
+
+    fd_lengths_target = jnp.asarray(fd_lengths_target)
+
+    indices_fd_force_opt = []
+    for edge in network.edges_where({"group": "cable"}):
+        index = structure.edge_index[edge]
+        indices_fd_force_opt.append(index)
+
     # define loss function
     @jit
     def loss_fn(diff_model, static_model):
@@ -162,7 +186,16 @@ if OPTIMIZE:
         eq_state = model(structure)
         xyz_pred = eq_state.xyz[indices_xyz_fd, :]
 
-        return jnp.sum((xyz_pred - xyz_fd_target) ** 2)
+        goal_xyz = jnp.sum((xyz_pred - xyz_fd_target) ** 2)
+
+        lengths_pred_fd = eq_state.lengths[indices_fd_length_opt, :].ravel()
+        lengths_diff = lengths_pred_fd - fd_lengths_target * target_length_ratio_fd
+        goal_length_fd = jnp.sum(lengths_diff ** 2)
+
+        forces_pred_fd = eq_state.forces[indices_fd_force_opt, :].ravel()
+        goal_force_fd = jnp.sum((forces_pred_fd - target_force_fd) ** 2)
+
+        return goal_xyz + goal_force_fd + goal_length_fd
 
     # set tree filtering specification
     filter_spec = jtu.tree_map(lambda _: False, model)
@@ -197,7 +230,7 @@ if OPTIMIZE:
         history.append(xk)
 
     opt = optimizer(fun=loss_fn,
-                    method=OPT_METHOD,
+                    method="L-BFGS-B",
                     jit=True,
                     tol=1e-6,  # 1e-12,
                     maxiter=5000,
@@ -222,10 +255,16 @@ if OPTIMIZE:
 
     network_opt = network_updated(network, eqstate_star)
 
+    more_stats = {}
+    more_stats["CabForce"] = [network_opt.edge_force(edge) for edge in network.edges_where({"group": "cable"})]
+    network_opt.print_stats(more_stats)
+
 # ------------------------------------------------------------------------------
 # Plott loss function
 # ------------------------------------------------------------------------------
-#
+
+if PLOT_LOSS:
+
     print("\nPlotting loss function...")
     plt.figure(figsize=(8, 5))
     start_time = time()
@@ -246,21 +285,24 @@ if OPTIMIZE:
 
 plotter = PlotterFD(figsize=(8, 5), dpi=200)
 
-from compas.datastructures import Network
-from compas.colors import Color
+for edge in network.edges():
+    plotter.add(Line(*network.edge_coordinates(*edge)),
+                draw_as_segment=True,
+                linestyle="dashed",
+                color=Color.grey(),
+                linewidth=0.5
+                )
 
-
-nodes, edges = network.to_nodes_and_edges()
-_network = Network.from_nodes_and_edges(nodes, edges)
-plotter.add(_network,
-            show_nodes=False,
-            edgewidth=0.5,
-            edgecolor={edge: Color.grey() for edge in network.edges()})
+# nodes, edges = network.to_nodes_and_edges()
+# _network = Network.from_nodes_and_edges(nodes, edges)
+# plotter.add(_network,
+#             show_nodes=False,
+#             edgewidth=0.5,
+#             edgecolor={edge: Color.grey() for edge in edges})
 
 for node in nodes_target:
     point = Point(*network.node_coordinates(node))
-    plotter.add(point, size=3)
-
+    plotter.add(point, size=5)
 
 plotter.add(network_opt,
             nodesize=2,
@@ -269,7 +311,7 @@ plotter.add(network_opt,
             show_loads=False,
             edgewidth=(1., 2.),
             show_edgetext=False,
-            show_nodes=True,
+            show_nodes=False,
             reactionscale=1.0)
 
 # plotter.add(network_opt,

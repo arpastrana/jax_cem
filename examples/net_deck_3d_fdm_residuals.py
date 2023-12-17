@@ -34,10 +34,11 @@ from jax_fdm.visualization import Viewer as ViewerFD
 VIEW = True
 OPTIMIZE = True  # True
 
-q0 = 2.0
-qmin, qmax = 1e-3, 50.0  # 0, 30 cablenet
+q0 = 1.0
+qmin, qmax = 1e-3, jnp.inf  # 0, 30 cablenet
 
-target_length_ratio_fd = 0.9
+target_length_ratio_fd = 1.0
+target_force_fd = 8.0
 
 # ------------------------------------------------------------------------------
 # Data
@@ -184,6 +185,12 @@ for edge in network.edges_where({"group": "hangers"}):
 
 fd_lengths_target = jnp.asarray(fd_lengths_target)
 
+# force goals
+indices_fd_force_opt = []
+for edge in network.edges_where({"group": "cable"}):
+    index = fd_structure.edge_index[edge]
+    indices_fd_force_opt.append(index)
+
 if OPTIMIZE:
 
     # define loss function
@@ -211,7 +218,11 @@ if OPTIMIZE:
         lengths_diff = lengths_pred_fd - fd_lengths_target * target_length_ratio_fd
         goal_length_fd = jnp.sum(lengths_diff ** 2)
 
-        return goal_residual_fd + goal_xyz_line_fd + goal_length_fd
+        # goal force
+        forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
+        goal_force_fd = jnp.sum((forces_pred_fd - target_force_fd) ** 2)
+
+        return goal_residual_fd + goal_xyz_line_fd + goal_length_fd + goal_force_fd
         # return goal_xyz_line_fd
         # return goal_xyz_line_fd + goal_length_fd
         # return goal_residual_fd

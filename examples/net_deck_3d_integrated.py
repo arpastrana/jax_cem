@@ -47,6 +47,7 @@ qmin, qmax = 1e-3, 30.0
 fmin, fmax = -50.0, 50.0
 
 target_length_ratio_fd = 1.0  # 0.9
+target_force_fd = 16.0
 
 # ------------------------------------------------------------------------------
 # Data
@@ -213,6 +214,11 @@ for edge in network.edges_where({"group": "hangers"}):
 
 fd_lengths_target = jnp.asarray(fd_lengths_target)
 
+indices_fd_force_opt = []
+for edge in network.edges_where({"group": "cable"}):
+    index = fd_structure.edge_index[edge]
+    indices_fd_force_opt.append(index)
+
 if OPTIMIZE:
 
     # define loss function
@@ -226,7 +232,6 @@ if OPTIMIZE:
 
         # cem loss
         xyz_pred = ce_eqstate.xyz[indices_ce_xyz_opt, :]
-
         xyz_ce_target = vmap(closest_point_on_line)(xyz_pred, lines_ce_target)
         goal_xyz_ce = jnp.sum((xyz_pred - xyz_ce_target) ** 2)
 
@@ -243,7 +248,15 @@ if OPTIMIZE:
         lengths_diff = lengths_pred_fd - fd_lengths_target * target_length_ratio_fd
         goal_length_fd = jnp.sum(lengths_diff ** 2)
 
-        loss_fd = goal_res_fd + goal_length_fd
+        # lengths_pred_fd = fd_eqstate.lengths[indices_fd_length_opt, :].ravel()
+        # goal_length_fd = jnp.var(lengths_pred_fd) / jnp.mean(lengths_pred_fd)
+
+        # goal_length_fd = 0.0
+
+        forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
+        goal_force_fd = jnp.sum((forces_pred_fd - target_force_fd) ** 2)
+
+        loss_fd = goal_res_fd + goal_length_fd + goal_force_fd
 
         return loss_ce + loss_fd
 
@@ -334,21 +347,12 @@ if OPTIMIZE:
 # ------------------------------------------------------------------------------
 
 if VIEW:
-    viewer = ViewerFD(width=900, height=900, show_grid=False)
+    viewer = ViewerFD(width=1000, height=1000, show_grid=False, viewmode="lighted")
 
     viewer.view.camera.distance = 28.0
     viewer.view.camera.position = (-13.859, 20.460, 14.682)
     viewer.view.camera.target = (1.008, 4.698, -3.034)
     viewer.view.camera.rotation = (0.885, 0.000, -2.385)
-
-    for _network in [network, topology]:
-        nodes, edges = _network.to_nodes_and_edges()
-        _network = Network.from_nodes_and_edges(nodes, edges)
-        viewer.add(_network,
-                   show_points=False,
-                   linewidth=0.5,
-                   linecolor=Color.grey(),
-                   )
 
     form_opt_view = form_opt.copy(FDNetwork)
 
@@ -369,35 +373,64 @@ if VIEW:
         _q = force / length
         form_opt_view.edge_attribute(edge, "q", _q)
 
+    print()
     print("\nCablenet")
-    network_opt.print_stats()
+    more_stats = {}
+    more_stats["CableForce"] = [network_opt.edge_force(edge) for edge in network.edges_where({"group": "cable"})]
+    network_opt.print_stats(more_stats)
 
     print("\nDeck")
     form_opt_view.print_stats()
 
+    _edges = []
+    for edge in form_opt_view.edges():
+        if topology.is_auxiliary_trail_edge(edge):
+            continue
+        u, v = edge
+        if not form_opt_view.has_edge(u, v):
+            u, v = v, u
+        _edges.append((u, v))
+
+    _nodes = []
+    for node in topology.support_nodes():
+        if node in nodes_ce_res_opt:
+            continue
+        _nodes.append(node)
+
     viewer.add(form_opt_view,
-               show_nodes=True,
+               show_nodes=False,
                nodesize=0.1,
                nodecolor=Color.black(),
-               # nodes=nodes_ce_res_opt,
-               # edges=[edge for edge in form_opt.edges() if not topology.is_auxiliary_trail_edge(edge)],
+               nodes=_nodes, # nodes_ce_res_opt,
+               edges=_edges,
                edgecolor="force",
-               edgewidth=(0.01, 0.1),
+               edgewidth=(0.05, 0.1),
                show_reactions=True,
                show_loads=True,
-               loadscale=1.0,
-               reactionscale=1.0
+               loadscale=1.5,
+               reactionscale=0.25,
+               reactioncolor=Color.from_rgb255(0, 150, 10)
                )
 
     viewer.add(network_opt,
                nodesize=0.05,
                edgecolor="force",
                show_reactions=True,
-               show_loads=True,
-               edgewidth=(0.01, 0.1),
+               show_loads=False,
+               edgewidth=(0.05, 0.1),
                show_nodes=True,
-               reactionscale=1.0
+               reactionscale=0.25,
+               reactioncolor=Color.from_rgb255(0, 150, 10)
                )
+
+    for _network in [network, topology]:
+        nodes, edges = _network.to_nodes_and_edges()
+        _network = Network.from_nodes_and_edges(nodes, edges)
+        # viewer.add(_network,
+        #            show_points=False,
+        #            linewidth=0.5,
+        #            linecolor=Color.grey(),
+        #            )
 
     viewer.show()
 

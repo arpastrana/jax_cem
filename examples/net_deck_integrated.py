@@ -44,10 +44,13 @@ from jax_fdm.equilibrium import network_updated
 from jax_fdm.visualization import Plotter as PlotterFD
 
 
+PLOT_LOSS = False
 VIEW = True
 OPTIMIZE = True
 
 q0 = 2.0
+target_force_fd = 5
+target_length_ratio_fd = 1.0
 
 # ------------------------------------------------------------------------------
 # Data
@@ -102,7 +105,7 @@ for i in range(10):
                 if sequence_other > sequence:
                     topology.shift_trail(node_origin, sequence_other)
 
-print(f"{topology.number_of_indirect_deviation_edges()=}")
+assert topology.number_of_indirect_deviation_edges() == 0
 
 # ------------------------------------------------------------------------------
 # Equilibrium structs
@@ -178,22 +181,6 @@ ceq, fdq = model(ce_structure, fd_structure)
 form_opt = form_from_eqstate(ce_structure, ceq)
 network_opt = network_updated(fd_structure.network, fdq)
 
-# if not OPTIMIZE:
-#     form_opt = form_from_eqstate(ce_structure, ceq)
-#     # network_opt = network_updated(fd_structure.network, fdq)
-
-#     # print(ce_eqstate_star.forces.shape, ce_structure.deviation_edges.shape)
-#     print("initial state")
-#     for edge, dev_force in zip(ce_structure.edges, ce_model.forces):
-#         if topology.is_deviation_edge(edge):
-#             print(edge, dev_force, topology.is_deviation_edge(edge))
-
-#     print("eq state")
-#     dev_forces = ceq.forces.ravel() * ce_structure.deviation_edges
-#     for edge, dev_force in zip(ce_structure.edges, dev_forces):
-#         if topology.is_deviation_edge(edge):
-#             print(edge, f"{dev_force=:.2f}", topology.is_deviation_edge(edge))
-
 # ------------------------------------------------------------------------------
 # Optimization
 # ------------------------------------------------------------------------------
@@ -202,7 +189,10 @@ network_opt = network_updated(fd_structure.network, fdq)
 nodes_ce_opt = []
 for node in topology.nodes():
     if topology.is_node_origin(node):
-        continue
+        neighbor = topology.neighbors(node).pop()
+        if topology.is_node_support(neighbor):
+            continue
+        # continue
     if topology.is_node_support(node):
         neighbor = topology.neighbors(node).pop()
         if topology.is_node_origin(neighbor):
@@ -218,7 +208,10 @@ for node in nodes_ce_opt:
 xyz_ce_target = jnp.asarray(xyz_ce_target)
 
 # fd goals
+# fd residual goal
 indices_fd_res_opt = indices_fdm
+
+# fd xyz goal
 indices_fd_xyz_opt = []
 fd_xyz_target = []
 for node in network.nodes_where({"is_target": True}):
@@ -228,6 +221,22 @@ for node in network.nodes_where({"is_target": True}):
     fd_xyz_target.append(xyz)
 
 xyz_fd_target = jnp.asarray(fd_xyz_target)
+
+indices_fd_length_opt = []
+fd_lengths_target = []
+
+for edge in network.edges_where({"group": "hangers"}):
+    index = fd_structure.edge_index[edge]
+    indices_fd_length_opt.append(index)
+    length = network.edge_length(*edge)
+    fd_lengths_target.append(length)
+
+fd_lengths_target = jnp.asarray(fd_lengths_target)
+
+indices_fd_force_opt = []
+for edge in network.edges_where({"group": "cable"}):
+    index = fd_structure.edge_index[edge]
+    indices_fd_force_opt.append(index)
 
 if OPTIMIZE:
     # define loss function
@@ -241,12 +250,26 @@ if OPTIMIZE:
 
         # cem loss
         xyz_pred = ce_eqstate.xyz[indices_ce_opt, :]
-        loss_ce = jnp.sum((xyz_pred - xyz_ce_target) ** 2)
+        goal_xyz_ce = jnp.sum((xyz_pred - xyz_ce_target) ** 2)
+        loss_ce = goal_xyz_ce
 
         # fd loss
         residuals_pred = fd_eqstate.residuals[indices_fd_res_opt, :]
-        xyz_pred = fd_eqstate.xyz[indices_fd_xyz_opt, :]
-        loss_fd = jnp.sum((residuals_pred - 0.0) ** 2) + jnp.sum((xyz_pred - xyz_fd_target) ** 2)
+        goal_residuals_fd = jnp.sum((residuals_pred - 0.0) ** 2)
+
+        lengths_pred_fd = fd_eqstate.lengths[indices_fd_length_opt, :].ravel()
+        lengths_diff = lengths_pred_fd - fd_lengths_target * target_length_ratio_fd
+        goal_length_fd = jnp.sum(lengths_diff ** 2)
+
+        # xyz_pred = fd_eqstate.xyz[indices_fd_xyz_opt, :]
+        # goal_xyz_fd = jnp.sum((xyz_pred - xyz_fd_target) ** 2)
+
+        forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
+        goal_force_fd = jnp.sum((forces_pred_fd - target_force_fd) ** 2)
+
+        # loss_fd = goal_residuals_fd + goal_force_fd + goal_xyz_fd
+        loss_fd = goal_residuals_fd + goal_force_fd + goal_length_fd
+        # loss_fd = goal_residuals_fd + goal_force_fd
 
         return loss_ce + loss_fd
 
@@ -313,19 +336,30 @@ if OPTIMIZE:
 # Plott loss function
 # ------------------------------------------------------------------------------
 
-    print("\nPlotting loss function...")
-    plt.figure(figsize=(8, 5))
-    start_time = time()
+    if PLOT_LOSS:
+        print("\nPlotting loss function...")
+        plt.figure(figsize=(8, 5))
+        start_time = time()
 
-    losses = [loss_fn(h_model, static_model) for h_model in history]
+        losses = [loss_fn(h_model, static_model) for h_model in history]
 
-    plt.plot(losses, label="Loss CEM+FDM")
-    plt.xlabel("Optimization iterations")
-    plt.ylabel("Loss")
-    plt.yscale("log")
-    plt.grid()
-    plt.legend()
-    print(f"Plotting time: {(time() - start_time):.4} seconds")
+        plt.plot(losses, label="Loss CEM+FDM")
+        plt.xlabel("Optimization iterations")
+        plt.ylabel("Loss")
+        plt.yscale("log")
+        plt.grid()
+        plt.legend()
+        print(f"Plotting time: {(time() - start_time):.4} seconds")
+
+# ------------------------------------------------------------------------------
+# Report stats
+# ------------------------------------------------------------------------------
+
+print()
+print("\nCablenet")
+more_stats = {}
+more_stats["CabForce"] = [network_opt.edge_force(edge) for edge in network.edges_where({"group": "cable"})]
+network_opt.print_stats(more_stats)
 
 # ------------------------------------------------------------------------------
 # Plotter
@@ -333,9 +367,24 @@ if OPTIMIZE:
 
 plotter = PlotterFD(figsize=(8, 5), dpi=200)
 
-# plotter.add(topology)
 for _network in [network, topology]:
     nodes, edges = _network.to_nodes_and_edges()
+
+    edges = list(_network.edges())
+    if isinstance(_network, TopologyDiagram):
+        _edges = []
+        for edge in edges:
+            u, v = edge
+            edge_rev = v, u
+            if _network.is_auxiliary_trail_edge(edge) or _network.is_auxiliary_trail_edge(edge_rev):
+                continue
+            _edges.append(edge)
+        edges = _edges
+
+    key_index = dict((key, index) for index, key in enumerate(_network.nodes()))
+    nodes = [_network.node_coordinates(key) for key in _network.nodes()]
+    edges = [(key_index[u], key_index[v]) for u, v in edges]
+
     _network = Network.from_nodes_and_edges(nodes, edges)
     plotter.add(_network,
                 show_nodes=False,
@@ -345,25 +394,31 @@ for _network in [network, topology]:
 for xyzs in xyz_ce_target, fd_xyz_target:
     for xyz in xyzs:
         point = Point(*xyz)
-        plotter.add(point, size=3)
+        plotter.add(point, size=5, color=Color.orange())
 
 plotter.add(form_opt,
-            nodesize=2,
+            nodesize=4,
             edgewidth=(1., 3.),
             edgetext="key",
+            show_nodes=False,
             show_edgetext=False,
-            show_reactions=False,
-            show_loads=False)
+            show_reactions=True,
+            show_loads=False,
+            reactioncolor=Color.from_rgb255(0, 150, 10),
+            reactionscale=0.5
+            )
 
 plotter.add(network_opt,
-            nodesize=2,
+            nodesize=4,
             edgecolor="force",
             show_reactions=True,
             show_loads=False,
             edgewidth=(1., 3.),
             show_edgetext=False,
-            show_nodes=True,
-            reactionscale=1.0)
+            show_nodes=False,
+            reactioncolor=Color.from_rgb255(0, 150, 10),
+            reactionscale=0.5
+            )
 
 plotter.zoom_extents()
 # plotter.save("net_deck_integrated.pdf")

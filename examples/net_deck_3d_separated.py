@@ -49,6 +49,7 @@ qmin, qmax = 1e-3, 30.0
 fmin, fmax = -50.0, 50.0
 
 target_length_ratio_fd = 1.0  # 0.9
+target_force_fd = 8.0
 
 # ------------------------------------------------------------------------------
 # Data
@@ -189,6 +190,12 @@ for edge in network.edges_where({"group": "hangers"}):
 
 fd_lengths_target = jnp.asarray(fd_lengths_target)
 
+indices_fd_force_opt = []
+for edge in network.edges_where({"group": "cable"}):
+    index = fd_structure.edge_index[edge]
+    indices_fd_force_opt.append(index)
+
+
 if OPTIMIZE_CEM:
 
     # define loss function
@@ -202,7 +209,6 @@ if OPTIMIZE_CEM:
 
         # cem loss
         xyz_pred = ce_eqstate.xyz[indices_ce_xyz_opt, :]
-
         xyz_ce_target = vmap(closest_point_on_line)(xyz_pred, lines_ce_target)
         goal_xyz_ce = jnp.sum((xyz_pred - xyz_ce_target) ** 2)
 
@@ -288,7 +294,10 @@ if OPTIMIZE_FDM:
         lengths_diff = lengths_pred_fd - fd_lengths_target * target_length_ratio_fd
         goal_length_fd = jnp.sum(lengths_diff ** 2)
 
-        loss_fd = goal_res_fd + goal_length_fd
+        forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
+        goal_force_fd = jnp.sum((forces_pred_fd - target_force_fd) ** 2)
+
+        loss_fd = goal_res_fd + goal_length_fd + goal_force_fd
 
         return loss_fd
 
@@ -412,8 +421,11 @@ if VIEW:
         _q = force / length
         form_opt_view.edge_attribute(edge, "q", _q)
 
+    print()
     print("\nCablenet")
-    network_opt.print_stats()
+    more_stats = {}
+    more_stats["CableForce"] = [network_opt.edge_force(edge) for edge in network.edges_where({"group": "cable"})]
+    network_opt.print_stats(more_stats)
 
     print("\nDeck")
     form_opt_view.print_stats()
