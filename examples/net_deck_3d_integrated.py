@@ -41,13 +41,15 @@ VIEW = True
 PLOT = False
 RECORD = True
 OPTIMIZE = True
+FIX_INTERFACE = False
 
 q0 = 1.0
 qmin, qmax = 1e-3, 30.0
 fmin, fmax = -50.0, 50.0
 
-target_length_ratio_fd = 1.0  # 0.9
-target_force_fd = 16.0
+weight_xyz = 1.0
+target_length_ratio_fd = 1.0
+target_force_fd = 10.0  # works for free interface if target range in [2, 14]
 
 # ------------------------------------------------------------------------------
 # Data
@@ -108,6 +110,12 @@ for node in topology.nodes():
             nodes_fdm.append(key)
 
 assert len(nodes_cem) == len(nodes_fdm)
+
+# assumes interface nodes in fdm network are supports
+if not FIX_INTERFACE:
+    for node in nodes_fdm:
+        if network.is_node_support(node):
+            network.node_attribute(node, "is_support", False)
 
 indices_cem = []
 for node in nodes_cem:
@@ -192,10 +200,14 @@ for node in topology.nodes():
     indices_ce_res_opt.append(index)
 
 # fd goals
+# residuals
 indices_fd_res_opt = indices_fdm
-indices_fd_xyz_opt = []
+
+# xyz
 fd_xyz_target = []
-for node in network.nodes_where({"is_target": True}):
+indices_fd_xyz_opt = []
+# for node in network.nodes_where({"is_target": True}):
+for node in nodes_fdm:
     index = fd_structure.node_index[node]
     indices_fd_xyz_opt.append(index)
     xyz = network.node_coordinates(node)
@@ -203,9 +215,9 @@ for node in network.nodes_where({"is_target": True}):
 
 xyz_fd_target = jnp.asarray(fd_xyz_target)
 
+# hanger lengths
 indices_fd_length_opt = []
 fd_lengths_target = []
-
 for edge in network.edges_where({"group": "hangers"}):
     index = fd_structure.edge_index[edge]
     indices_fd_length_opt.append(index)
@@ -214,6 +226,7 @@ for edge in network.edges_where({"group": "hangers"}):
 
 fd_lengths_target = jnp.asarray(fd_lengths_target)
 
+# cable forces
 indices_fd_force_opt = []
 for edge in network.edges_where({"group": "cable"}):
     index = fd_structure.edge_index[edge]
@@ -241,9 +254,18 @@ if OPTIMIZE:
         loss_ce = goal_xyz_ce + goal_res_ce
 
         # fd loss
-        residuals_pred_fd = fd_eqstate.residuals[indices_fd_res_opt, :]
-        goal_res_fd = jnp.sum((residuals_pred_fd - 0.0) ** 2)
+        if FIX_INTERFACE:
+            # residuals
+            residuals_pred_fd = fd_eqstate.residuals[indices_fd_res_opt, :]
+            goal_res_fd = jnp.sum((residuals_pred_fd - 0.0) ** 2)
+            goal_interface_fd = goal_res_fd
+        else:
+            # xyz at interface
+            xyz_pred_fd = fd_eqstate.xyz[indices_fd_xyz_opt, :]
+            goal_xyz_fd = jnp.sum((xyz_pred_fd - xyz_fd_target) ** 2) * weight_xyz
+            goal_interface_fd = goal_xyz_fd
 
+        # hanger lengths
         lengths_pred_fd = fd_eqstate.lengths[indices_fd_length_opt, :].ravel()
         lengths_diff = lengths_pred_fd - fd_lengths_target * target_length_ratio_fd
         goal_length_fd = jnp.sum(lengths_diff ** 2)
@@ -251,12 +273,11 @@ if OPTIMIZE:
         # lengths_pred_fd = fd_eqstate.lengths[indices_fd_length_opt, :].ravel()
         # goal_length_fd = jnp.var(lengths_pred_fd) / jnp.mean(lengths_pred_fd)
 
-        # goal_length_fd = 0.0
-
+        # cable forces
         forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
         goal_force_fd = jnp.sum((forces_pred_fd - target_force_fd) ** 2)
 
-        loss_fd = goal_res_fd + goal_length_fd + goal_force_fd
+        loss_fd = goal_interface_fd + goal_length_fd + goal_force_fd
 
         return loss_ce + loss_fd
 

@@ -46,11 +46,13 @@ from jax_fdm.visualization import Plotter as PlotterFD
 
 PLOT_LOSS = False
 VIEW = True
-OPTIMIZE = True
+OPTIMIZE = False
+FIX_INTERFACE = False
 
 q0 = 2.0
 target_force_fd = 5
 target_length_ratio_fd = 1.0
+weight_xyz = 1.0
 
 # ------------------------------------------------------------------------------
 # Data
@@ -134,6 +136,12 @@ for node in topology.nodes():
             # network.node_load(key, scale_vector(reaction, -1.))
             nodes_fdm.append(key)
 
+# assumes interface nodes in fdm network are supports
+if not FIX_INTERFACE:
+    for node in nodes_fdm:
+        if network.is_node_support(node):
+            network.node_attribute(node, "is_support", False)
+
 indices_cem = []
 for node in nodes_cem:
     indices_cem.append(ce_structure.node_index[node])
@@ -214,7 +222,8 @@ indices_fd_res_opt = indices_fdm
 # fd xyz goal
 indices_fd_xyz_opt = []
 fd_xyz_target = []
-for node in network.nodes_where({"is_target": True}):
+# for node in network.nodes_where({"is_target": True}):
+for node in nodes_fdm:
     index = fd_structure.node_index[node]
     indices_fd_xyz_opt.append(index)
     xyz = network.node_coordinates(node)
@@ -254,22 +263,27 @@ if OPTIMIZE:
         loss_ce = goal_xyz_ce
 
         # fd loss
-        residuals_pred = fd_eqstate.residuals[indices_fd_res_opt, :]
-        goal_residuals_fd = jnp.sum((residuals_pred - 0.0) ** 2)
+        if FIX_INTERFACE:
+            # residuals
+            residuals_pred = fd_eqstate.residuals[indices_fd_res_opt, :]
+            goal_residuals_fd = jnp.sum((residuals_pred - 0.0) ** 2)
+            goal_interface_fd = goal_residuals_fd
+        else:
+            # xyz
+            xyz_pred_fd = fd_eqstate.xyz[indices_fd_xyz_opt, :]
+            goal_xyz_fd = jnp.sum((xyz_pred_fd - xyz_fd_target) ** 2) * weight_xyz
+            goal_interface_fd = goal_xyz_fd
 
+        # hanger lengths
         lengths_pred_fd = fd_eqstate.lengths[indices_fd_length_opt, :].ravel()
         lengths_diff = lengths_pred_fd - fd_lengths_target * target_length_ratio_fd
         goal_length_fd = jnp.sum(lengths_diff ** 2)
 
-        # xyz_pred = fd_eqstate.xyz[indices_fd_xyz_opt, :]
-        # goal_xyz_fd = jnp.sum((xyz_pred - xyz_fd_target) ** 2)
-
+        # cable forces
         forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
         goal_force_fd = jnp.sum((forces_pred_fd - target_force_fd) ** 2)
 
-        # loss_fd = goal_residuals_fd + goal_force_fd + goal_xyz_fd
-        loss_fd = goal_residuals_fd + goal_force_fd + goal_length_fd
-        # loss_fd = goal_residuals_fd + goal_force_fd
+        loss_fd = goal_interface_fd + goal_force_fd + goal_length_fd
 
         return loss_ce + loss_fd
 
