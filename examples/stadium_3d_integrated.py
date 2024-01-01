@@ -39,7 +39,6 @@ VIEW = True
 
 OPTIMIZE = True
 
-FIX_INTERFACE = True
 PLOT_LOSS = True
 EXPORT_LOSS = False
 EXPORT_JSON = False
@@ -47,6 +46,7 @@ EXPORT_JSON = False
 q0 = 2.0
 qmin, qmax = 1e-3, 30.0
 fmin, fmax = -50.0, 50.0
+fmin_cable = 1e-2
 
 # weights ce
 weight_xyz_ce = 1.0
@@ -54,12 +54,17 @@ weight_residual = 3.0
 
 # weights fd
 weight_length = 1.0
-target_length_ratio_fd = 0.6
+target_length_ratio_fd = 0.5
 
-weight_xyz_fd = 1.0
+weight_xyz_fd = 0.0
 
 weight_force = 1.0
-target_force_fd = 0.5
+target_force_fd = 0.8
+
+weight_reg_fd = 1e-1  # 3e-2
+
+# weights ce spoke
+weight_xyz_ce_spoke = 0.1
 
 # ------------------------------------------------------------------------------
 # Data
@@ -68,6 +73,7 @@ target_force_fd = 0.5
 HERE = os.path.dirname(__file__)
 IN_NET = os.path.abspath(os.path.join(HERE, "data/stadium_cablenet.json"))
 IN_ARCH = os.path.abspath(os.path.join(HERE, "data/stadium_arch.json"))
+IN_SPOKE = os.path.abspath(os.path.join(HERE, "data/stadium_spoke.json"))
 # IN_MESH_DECK = os.path.abspath(os.path.join(HERE, "data/deck_mesh_3d.json"))
 # mesh = Mesh.from_json(IN_MESH_DECK)
 
@@ -78,6 +84,8 @@ IN_ARCH = os.path.abspath(os.path.join(HERE, "data/stadium_arch.json"))
 network = FDNetwork.from_json(IN_NET)
 topology = TopologyDiagram.from_json(IN_ARCH)
 assert topology.number_of_indirect_deviation_edges() == 0
+topology_spoke = TopologyDiagram.from_json(IN_SPOKE)
+assert topology_spoke.number_of_indirect_deviation_edges() == 0
 
 # ------------------------------------------------------------------------------
 # Manipulate topology
@@ -90,10 +98,11 @@ network.edges_forcedensities(q=q0)
 # ------------------------------------------------------------------------------
 
 ce_structure = CEStructure.from_topology_diagram(topology)
+ce_spoke_structure = CEStructure.from_topology_diagram(topology_spoke)
 fd_structure = FDStructure.from_network(network)
 
 # ------------------------------------------------------------------------------
-# Indices pre calculation
+# Indices pre calculation (arch and cablenet)
 # ------------------------------------------------------------------------------
 
 # add loads
@@ -103,7 +112,7 @@ nodes_cem = []  # nodes in cem arch where to apply cem reaction as a load
 gkey_key = network.gkey_key()
 
 # search for interface nodes in topology diagram
-for node in topology.nodes_where({"interface": 1}):
+for node in topology.nodes_where({"is_interface": True}):
     key = gkey_key.get(geometric_key(topology.node_coordinates(node)))
 
     if key is None:
@@ -112,24 +121,6 @@ for node in topology.nodes_where({"interface": 1}):
     nodes_cem.append(node)
     nodes_fdm.append(key)
 
-# for node in topology.nodes():
-#     # search for origin nodes at auxiliary trails
-#     if topology.is_node_origin(node):
-#         for neighbor in topology.neighbors(node):
-#             if not topology.is_node_support(neighbor):
-#                 continue
-
-#             key = gkey_key.get(geometric_key(topology.node_coordinates(node)))
-
-#             if key is None:
-#                 continue
-
-#             # reaction = form_jax_opt.reaction_force(neighbor)
-#             nodes_cem.append(neighbor)
-
-#             # key = gkey_key[geometric_key(topology.node_coordinates(node))]
-#             # network.node_load(key, scale_vector(reaction, -1.))
-#             nodes_fdm.append(key)
 assert len(nodes_cem) == len(nodes_fdm)
 
 indices_cem = []
@@ -139,6 +130,34 @@ for node in nodes_cem:
 indices_fdm = []
 for node in nodes_fdm:
     indices_fdm.append(fd_structure.node_index[node])
+
+# ------------------------------------------------------------------------------
+# Indices pre calculation (spoke wheel and cablenet)
+# ------------------------------------------------------------------------------
+
+# add loads
+nodes_spoke_fdm = []  # support nodes in fdm world where to get reaction force from
+nodes_spoke_cem = []  # nodes in cem arch where to apply cem reaction as a load
+
+# search for interface nodes in topology diagram
+for node in topology_spoke.nodes_where({"is_interface": True}):
+    key = gkey_key.get(geometric_key(topology_spoke.node_coordinates(node)))
+
+    if key is None:
+        continue
+
+    nodes_spoke_cem.append(node)
+    nodes_spoke_fdm.append(key)
+
+assert len(nodes_spoke_cem) == len(nodes_spoke_fdm)
+
+indices_spoke_cem = []
+for node in nodes_spoke_cem:
+    indices_spoke_cem.append(ce_spoke_structure.node_index[node])
+
+indices_spoke_fdm = []
+for node in nodes_spoke_fdm:
+    indices_spoke_fdm.append(fd_structure.node_index[node])
 
 
 # ------------------------------------------------------------------------------
@@ -151,19 +170,25 @@ class MixedEquilibriumModel(eqx.Module):
     """
     cem: CEModel
     fdm: FDModel
+    cem2: CEModel
 
-    def __call__(self, ce_structure, fd_structure):
+    def __call__(self, ce_structure, fd_structure, ce_spoke_structure):
         """
         Compute a state of static equilibrium.
         """
         fd_equilibrium = self.fdm(fd_structure)
         fd_reactions = fd_equilibrium.residuals[indices_fdm, :]
+        fd_spoke_reactions = fd_equilibrium.residuals[indices_spoke_fdm, :]
 
         loads = self.cem.loads.at[indices_cem, :].set(fd_reactions)
         cem = eqx.tree_at(lambda tree: (tree.loads), self.cem, replace=(loads))
         ce_equilibrium = cem(ce_structure)
 
-        return ce_equilibrium, fd_equilibrium
+        loads = self.cem2.loads.at[indices_spoke_cem, :].set(fd_spoke_reactions)
+        cem2 = eqx.tree_at(lambda tree: (tree.loads), self.cem2, replace=(loads))
+        ce_spoke_equilibrium = cem2(ce_spoke_structure)
+
+        return ce_equilibrium, fd_equilibrium, ce_spoke_equilibrium
 
 # ------------------------------------------------------------------------------
 # Equilibrium models
@@ -171,12 +196,14 @@ class MixedEquilibriumModel(eqx.Module):
 
 ce_model = CEModel.from_topology_diagram(topology)
 fd_model = FDModel.from_network(network)
+ce_spoke_model = CEModel.from_topology_diagram(topology_spoke)
 
-model = MixedEquilibriumModel(cem=ce_model, fdm=fd_model)
-ceq, fdq = model(ce_structure, fd_structure)
+model = MixedEquilibriumModel(cem=ce_model, fdm=fd_model, cem2=ce_spoke_model)
+ceq, fdq, ceq_spoke = model(ce_structure, fd_structure, ce_spoke_structure)
 
 form_opt = form_from_eqstate(ce_structure, ceq)
 network_opt = network_updated(fd_structure.network, fdq)
+form_spoke_opt = form_from_eqstate(ce_spoke_structure, ceq_spoke)
 
 print()
 print("\nCablenet")
@@ -259,6 +286,21 @@ for edge in network.edges_where({"group": "cable"}):
     index = fd_structure.edge_index[edge]
     indices_fd_force_opt.append(index)
 
+# ce spoke goals
+nodes_ce_spoke_xyz_opt = []
+for node in topology_spoke.support_nodes():
+    nodes_ce_spoke_xyz_opt.append(node)
+
+xyz_ce_spoke_target = []
+indices_ce_spoke_xyz_opt = []
+for node in nodes_ce_spoke_xyz_opt:
+    index = ce_spoke_structure.node_index[node]
+    indices_ce_spoke_xyz_opt.append(index)
+    xyz_ce_spoke_target.append(topology_spoke.node_coordinates(node))
+
+xyz_ce_spoke_target = jnp.asarray(xyz_ce_spoke_target)
+# print(len(nodes_ce_spoke_xyz_opt), len(indices_ce_spoke_xyz_opt))
+
 if OPTIMIZE:
 
     # define loss function
@@ -268,7 +310,7 @@ if OPTIMIZE:
         A loss function.
         """
         model = eqx.combine(diff_model, static_model)
-        ce_eqstate, fd_eqstate = model(ce_structure, fd_structure)
+        ce_eqstate, fd_eqstate, ce_spoke_eqstate = model(ce_structure, fd_structure, ce_spoke_structure)
 
         # cem loss
         xyz_pred = ce_eqstate.xyz[indices_ce_xyz_opt, :]
@@ -296,32 +338,56 @@ if OPTIMIZE:
         forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
         goal_force_fd = jnp.mean((forces_pred_fd - target_force_fd) ** 2)
 
-        # loss_fd = goal_force_fd * weight_force + goal_length_fd * weight_length
-        loss_fd = goal_length_fd * weight_length + goal_xyz_fd * weight_xyz_fd + goal_force_fd * weight_force
+        # fd regularizer
+        goal_reg_fd = jnp.mean(jnp.square(diff_model.fdm.q))
 
-        return loss_ce + loss_fd
+        # loss_fd = goal_force_fd * weight_force + goal_length_fd * weight_length
+        loss_fd = goal_length_fd * weight_length + goal_xyz_fd * weight_xyz_fd + goal_force_fd * weight_force + goal_reg_fd * weight_reg_fd
+
+        # cem spoke loss
+        xyz_spoke_pred = ce_spoke_eqstate.xyz[indices_ce_spoke_xyz_opt, :]
+        goal_xyz_ce_spoke = jnp.mean((xyz_spoke_pred - xyz_ce_spoke_target) ** 2)
+        loss_ce_spoke = goal_xyz_ce_spoke * weight_xyz_ce_spoke
+
+        return loss_ce + loss_fd + loss_ce_spoke
 
     # set tree filtering specification
     filter_spec = jtu.tree_map(lambda _: False, model)
-    filter_spec = eqx.tree_at(lambda tree: (tree.cem.forces, tree.fdm.q),
-                              filter_spec, replace=(True, True))
+    filter_spec = eqx.tree_at(lambda tree: (tree.cem.forces,
+                                            tree.fdm.q,
+                                            tree.cem2.forces
+                                            ),
+                              filter_spec,
+                              replace=(True, True, True))
 
     # split model into differentiable and static submodels
     diff_model, static_model = eqx.partition(model, filter_spec)
 
     # define parameter bounds
+    cem_bound_low = []
+    for edge in topology.edges():
+        if topology.edge_attribute(edge, "group") == "cable":
+            cem_bound_low.append(fmin_cable)
+        else:
+            cem_bound_low.append(fmin)
+    cem_bound_low = jnp.array(cem_bound_low)
+
     bound_low = eqx.tree_at(lambda tree: (tree.cem.forces,
-                                          tree.fdm.q),
+                                          tree.fdm.q,
+                                          tree.cem2.forces),
                             diff_model,
-                            replace=(jnp.ones_like(model.cem.forces) * fmin,
-                                     jnp.ones_like(model.fdm.q) * qmin)
+                            replace=(cem_bound_low,
+                                     jnp.ones_like(model.fdm.q) * qmin,
+                                     jnp.ones_like(model.cem2.forces) * fmin)
                             )
 
     bound_up = eqx.tree_at(lambda tree: (tree.cem.forces,
-                                         tree.fdm.q),
+                                         tree.fdm.q,
+                                         tree.cem2.forces),
                            diff_model,
                            replace=(jnp.ones_like(model.cem.forces) * fmax,
-                                    jnp.ones_like(model.fdm.q) * qmax)
+                                    jnp.ones_like(model.fdm.q) * qmax,
+                                    jnp.ones_like(model.cem2.forces) * fmax)
                            )
 
     bounds = (bound_low, bound_up)
@@ -358,10 +424,11 @@ if OPTIMIZE:
 
     # generate optimized compas datastructures
     model_star = eqx.combine(diff_model_star, static_model)
-    ce_eqstate_star, fd_eqstate_star = model_star(ce_structure, fd_structure)
+    ce_eqstate_star, fd_eqstate_star, ce_spoke_eqstate_star = model_star(ce_structure, fd_structure, ce_spoke_structure)
 
     form_opt = form_from_eqstate(ce_structure, ce_eqstate_star)
     network_opt = network_updated(fd_structure.network, fd_eqstate_star)
+    form_spoke_opt = form_from_eqstate(ce_spoke_structure, ce_spoke_eqstate_star)
 
 # ------------------------------------------------------------------------------
 # Plot loss function
@@ -416,8 +483,8 @@ if VIEW:
     viewer.view.camera.target = (1.008, 4.698, -3.034)
     viewer.view.camera.rotation = (0.885, 0.000, -2.385)
 
+    # arch
     form_opt_view = form_opt.copy(FDNetwork)
-
     for node in topology.nodes():
         load = form_opt.node_attributes(node, ["qx", "qy", "qz"])
         form_opt_view.node_load(node, load)
@@ -435,6 +502,25 @@ if VIEW:
         _q = force / length
         form_opt_view.edge_attribute(edge, "q", _q)
 
+    # spoke wheel
+    form_spoke_opt_view = form_spoke_opt.copy(FDNetwork)
+    for node in topology_spoke.nodes():
+        load = form_spoke_opt.node_attributes(node, ["qx", "qy", "qz"])
+        form_spoke_opt_view.node_load(node, load)
+
+    for node in topology_spoke.nodes():
+        if topology_spoke.is_node_support(node):
+            form_spoke_opt_view.node_support(node)
+            reaction = form_spoke_opt.node_attributes(node, ["rx", "ry", "rz"])
+            form_spoke_opt_view.node_attributes(node, ["rx", "ry", "rz"], scale_vector(reaction, -1.0))
+
+    for edge in topology_spoke.edges():
+        length = form_spoke_opt.edge_length(*edge)
+        form_spoke_opt_view.edge_attribute(edge, "length", length)
+        force = form_spoke_opt.edge_force(edge)
+        _q = force / length
+        form_spoke_opt_view.edge_attribute(edge, "q", _q)
+
     print()
     print("\nCablenet")
     more_stats = {}
@@ -443,6 +529,9 @@ if VIEW:
 
     print("\nArch")
     form_opt_view.print_stats()
+
+    print("\nSpoke")
+    form_spoke_opt_view.print_stats()
 
     _edges = []
     for edge in form_opt_view.edges():
@@ -484,10 +573,9 @@ if VIEW:
                reactioncolor=Color.pink(), # Color.from_rgb255(0, 150, 10)
                )
 
-    _nodes = nodes_cable
-    _nodes = None
+    # _nodes = nodes_cable
+    # _nodes = None
     viewer.add(network_opt,
-               nodes=_nodes,
                show_nodes=False,
                nodesize=0.1,
                nodecolor=Color.purple(),
@@ -499,8 +587,25 @@ if VIEW:
                reactioncolor=Color(0.1, 0.1, 0.1), # Color.from_rgb255(0, 150, 10)
                )
 
+    viewer.add(form_spoke_opt_view,
+               show_nodes=False,
+               nodesize=0.1, # 0.1,
+               nodecolor=Color.black(),
+               # nodes=_nodes, # nodes_ce_res_opt, # , _nodes
+               # edges=_edges,
+               edgecolor="force",
+               edgewidth=(0.01, 0.1),
+               show_reactions=True,
+               show_loads=True,
+               loadscale=1.0,
+               reactionscale=1.0,
+               reactioncolor=Color.orange(), # Color.from_rgb255(0, 150, 10)
+               )
+
+    viewer.add(network, as_wireframe=True, show_points=False)
     topology_view = topology.copy(FDNetwork)
     viewer.add(topology_view, as_wireframe=True, show_points=False)
-    viewer.add(network, as_wireframe=True, show_points=False)
+    topology_spoke_view = topology_spoke.copy(FDNetwork)
+    viewer.add(topology_spoke_view, as_wireframe=True, show_points=False)
 
     viewer.show()
