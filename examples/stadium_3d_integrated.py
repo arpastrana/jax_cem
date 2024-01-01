@@ -47,21 +47,24 @@ q0 = 2.0
 qmin, qmax = 1e-3, 30.0
 fmin, fmax = -50.0, 50.0
 fmin_cable = 1e-2
+fmax_tie = -1e-2
+zmin = 0.0
+zmax = 0.5
 
 # weights ce
 weight_xyz_ce = 1.0
-weight_residual = 3.0
+weight_residual = 5.0
 
 # weights fd
 weight_length = 1.0
-target_length_ratio_fd = 0.5
+target_length_ratio_fd = 0.8
 
 weight_xyz_fd = 0.0
 
 weight_force = 1.0
-target_force_fd = 0.8
+target_force_fd = 0.2
 
-weight_reg_fd = 1e-1  # 3e-2
+weight_reg_fd = 1e-2  # 1e-2
 
 # weights ce spoke
 weight_xyz_ce_spoke = 0.1
@@ -178,10 +181,14 @@ class MixedEquilibriumModel(eqx.Module):
         """
         fd_equilibrium = self.fdm(fd_structure)
         fd_reactions = fd_equilibrium.residuals[indices_fdm, :]
+        fd_supports = fd_equilibrium.xyz[indices_fdm, :]
         fd_spoke_reactions = fd_equilibrium.residuals[indices_spoke_fdm, :]
 
         loads = self.cem.loads.at[indices_cem, :].set(fd_reactions)
-        cem = eqx.tree_at(lambda tree: (tree.loads), self.cem, replace=(loads))
+        xyz = self.cem.xyz.at[indices_cem, :].set(fd_supports)
+        cem = eqx.tree_at(lambda tree: (tree.loads, tree.xyz),
+                          self.cem,
+                          replace=(loads, xyz))
         ce_equilibrium = cem(ce_structure)
 
         loads = self.cem2.loads.at[indices_spoke_cem, :].set(fd_spoke_reactions)
@@ -355,10 +362,11 @@ if OPTIMIZE:
     filter_spec = jtu.tree_map(lambda _: False, model)
     filter_spec = eqx.tree_at(lambda tree: (tree.cem.forces,
                                             tree.fdm.q,
+                                            tree.fdm.xyz_fixed,
                                             tree.cem2.forces
                                             ),
                               filter_spec,
-                              replace=(True, True, True))
+                              replace=(True, True, True, True))
 
     # split model into differentiable and static submodels
     diff_model, static_model = eqx.partition(model, filter_spec)
@@ -372,21 +380,47 @@ if OPTIMIZE:
             cem_bound_low.append(fmin)
     cem_bound_low = jnp.array(cem_bound_low)
 
+    cem_bound_up = []
+    for edge in topology.edges():
+        if topology.edge_attribute(edge, "group") == "tie":
+            cem_bound_up.append(fmax_tie)
+        else:
+            cem_bound_up.append(fmax)
+    cem_bound_up = jnp.array(cem_bound_up)
+
+    fdm_xyz_fixed_bound_low = []
+    fdm_xyz_fixed_bound_up = []
+    for node in network.nodes_supports():
+        x, y, z = network.node_coordinates(node)
+        if node in nodes_fdm:
+            fdm_xyz_fixed_bound_low.append([x, y, z - zmin])
+            fdm_xyz_fixed_bound_up.append([x, y, z + zmax])
+        else:
+            fdm_xyz_fixed_bound_low.append([x, y, z])
+            fdm_xyz_fixed_bound_up.append([x, y, z])
+
+    fdm_xyz_fixed_bound_low = jnp.array(fdm_xyz_fixed_bound_low)
+    fdm_xyz_fixed_bound_up = jnp.array(fdm_xyz_fixed_bound_up)
+
     bound_low = eqx.tree_at(lambda tree: (tree.cem.forces,
                                           tree.fdm.q,
+                                          tree.fdm.xyz_fixed,
                                           tree.cem2.forces),
                             diff_model,
                             replace=(cem_bound_low,
                                      jnp.ones_like(model.fdm.q) * qmin,
+                                     fdm_xyz_fixed_bound_low,
                                      jnp.ones_like(model.cem2.forces) * fmin)
                             )
 
     bound_up = eqx.tree_at(lambda tree: (tree.cem.forces,
                                          tree.fdm.q,
+                                         tree.fdm.xyz_fixed,
                                          tree.cem2.forces),
                            diff_model,
-                           replace=(jnp.ones_like(model.cem.forces) * fmax,
+                           replace=(cem_bound_up,
                                     jnp.ones_like(model.fdm.q) * qmax,
+                                    fdm_xyz_fixed_bound_up,
                                     jnp.ones_like(model.cem2.forces) * fmax)
                            )
 
@@ -462,7 +496,7 @@ if OPTIMIZE and PLOT_LOSS:
                 file.write(f"{loss}\n")
         print(f"Saved loss history to {filepath}")
 
-    plt.plot(losses, label="Loss CEM+FDM")
+    plt.plot(losses, label="Loss MEM")
     plt.xlabel("Optimization iterations")
     plt.ylabel("Loss")
     plt.yscale("log")
@@ -602,10 +636,10 @@ if VIEW:
                reactioncolor=Color.orange(), # Color.from_rgb255(0, 150, 10)
                )
 
-    viewer.add(network, as_wireframe=True, show_points=False)
-    topology_view = topology.copy(FDNetwork)
-    viewer.add(topology_view, as_wireframe=True, show_points=False)
-    topology_spoke_view = topology_spoke.copy(FDNetwork)
-    viewer.add(topology_spoke_view, as_wireframe=True, show_points=False)
+    # viewer.add(network, as_wireframe=True, show_points=False)
+    # topology_view = topology.copy(FDNetwork)
+    # viewer.add(topology_view, as_wireframe=True, show_points=False)
+    # topology_spoke_view = topology_spoke.copy(FDNetwork)
+    # viewer.add(topology_spoke_view, as_wireframe=True, show_points=False)
 
     viewer.show()
