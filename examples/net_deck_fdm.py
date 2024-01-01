@@ -3,12 +3,15 @@ import os
 import matplotlib.pyplot as plt
 
 from math import copysign
+from math import fabs
 
 from time import time
 
+from compas.datastructures import Network
 from compas.colors import Color
 from compas.geometry import Line, Point
 from compas.utilities import geometric_key
+from compas.utilities import remap_values
 
 from compas_cem.diagrams import TopologyDiagram
 
@@ -28,11 +31,13 @@ from jax_fdm.equilibrium import network_updated
 from jax_fdm.visualization import Plotter as PlotterFD
 
 
-PLOT_LOSS = True
-VIEW = True
 OPTIMIZE = True
+PLOT_LOSS = True
+PLOT = True
+PLOT_SAVE = True
+EXPORT_LOSS = True
 
-q0 = 2.0
+q0 = 1.5
 target_length_ratio_fd = 1.0
 target_force_fd = 5
 
@@ -69,7 +74,7 @@ for node in topology.nodes():
         # NOTE: If we don't add the nodes at the interface between cablenet and deck
         # as targets, and don't add a target force on the cable,
         # then the optimization problem DOES converge
-        # nodes_cem_target.append(key)
+        nodes_cem_target.append(key)
 
         if network.is_node_support(key):
             network.node_attribute(key, "is_support", False)
@@ -149,7 +154,8 @@ if OPTIMIZE:
     indices_xyz_fd = []
     fd_xyz_target = []
 
-    nodes_target = list(network.nodes_where({"is_target": True})) + nodes_cem_target
+    # nodes_target = list(network.nodes_where({"is_target": True})) + nodes_cem_target
+    nodes_target = nodes_cem_target
 
     for node in nodes_target:
         index = structure.node_index[node]
@@ -260,7 +266,17 @@ if OPTIMIZE:
     network_opt.print_stats(more_stats)
 
 # ------------------------------------------------------------------------------
-# Plott loss function
+# Export loss function
+# ------------------------------------------------------------------------------
+
+if EXPORT_LOSS:
+    losses = [loss_fn(h_model, static_model) for h_model in history]
+    with open("netdeck_fdm_loss.txt", "w") as file:
+        for loss in losses:
+            file.write(f"{loss}\n")
+
+# ------------------------------------------------------------------------------
+# Plot loss function
 # ------------------------------------------------------------------------------
 
 if PLOT_LOSS:
@@ -283,109 +299,43 @@ if PLOT_LOSS:
 # Plotter
 # ------------------------------------------------------------------------------
 
-plotter = PlotterFD(figsize=(8, 5), dpi=200)
+if PLOT:
 
-for edge in network.edges():
-    plotter.add(Line(*network.edge_coordinates(*edge)),
-                draw_as_segment=True,
-                linestyle="dashed",
-                color=Color.grey(),
-                linewidth=0.5
+    plotter = PlotterFD(figsize=(8, 5), dpi=200)
+    for edge in network.edges():
+        plotter.add(Line(*network.edge_coordinates(*edge)),
+                    draw_as_segment=True,
+                    linestyle="dashed",
+                    color=Color.grey(),
+                    linewidth=0.5)
+
+    # manually calculate edge widths
+    width = (1.0, 3.0)
+    width_min, width_max = width
+    forces_network = [fabs(network_opt.edge_force(edge)) for edge in network_opt.edges()]
+    forces = forces_network
+    force_max = 5.0  # max(forces)
+    force_min = 0.0  # min(forces)
+    widths_network = remap_values(forces_network, width_min, width_max, force_min, force_max)
+
+    plotter.add(network_opt,
+                nodesize=20,
+                edgecolor="force",
+                show_reactions=False,
+                show_loads=False,
+                edgewidth={edge: width for edge, width in zip(network_opt.edges(), widths_network)},
+                show_edgetext=False,
+                show_nodes=True,
+                reactioncolor=Color.from_rgb255(0, 150, 10),
+                reactionscale=-0.5,
+                sizepolicy="absolute"
                 )
 
-# nodes, edges = network.to_nodes_and_edges()
-# _network = Network.from_nodes_and_edges(nodes, edges)
-# plotter.add(_network,
-#             show_nodes=False,
-#             edgewidth=0.5,
-#             edgecolor={edge: Color.grey() for edge in edges})
+    plotter.zoom_extents()
 
-for node in nodes_target:
-    point = Point(*network.node_coordinates(node))
-    plotter.add(point, size=5)
+    if PLOT_SAVE:
+        filename = "netdeck_fdm.pdf"
+        plotter.save(filename, transparent=True)
+        print(f"Saved pdf to {filename}")
 
-plotter.add(network_opt,
-            nodesize=2,
-            edgecolor="force",
-            show_reactions=False,
-            show_loads=False,
-            edgewidth=(1., 2.),
-            show_edgetext=False,
-            show_nodes=False,
-            reactionscale=1.0)
-
-# plotter.add(network_opt,
-#             nodesize=2,
-#             edgecolor="fd",
-#             show_reactions=True,
-#             show_loads=True,
-#             edgewidth=(1., 3.),
-#             show_edgetext=True,
-#             show_nodes=True,
-#             reactionscale=1.0)
-
-# for node in network.nodes():
-#     line = Polyline((network.node_coordinates(node), network_opt.node_coordinates(node)))
-#     plotter.add(line)
-
-plotter.zoom_extents()
-# plotter.save("net_deck_fdm.pdf")
-plotter.show()
-
-# ------------------------------------------------------------------------------
-# Launch viewer
-# ------------------------------------------------------------------------------
-
-# if VIEW:
-
-#     shift_vector = [0.0, -10.0, 0.0]
-#     # form = form.transformed(Translation.from_vector(scale_vector(shift_vector, 0.)))
-#     form_jax = form_jax.transformed(Translation.from_vector(scale_vector(shift_vector, 0.)))
-#     # forms = [form, form_jax]
-#     forms = [form_jax]
-
-#     # i = 2
-#     # if OPTIMIZE:
-#         # form_opt = form_opt.transformed(Translation.from_vector(scale_vector(shift_vector, 0 * 2.)))
-#         # forms.append(form_opt)
-#         # i += 1.
-
-#     if OPTIMIZE_CEM:
-#         form_jax_opt = form_jax_opt.transformed(Translation.from_vector(scale_vector(shift_vector, 0 * 2.)))
-#         forms.append(form_jax_opt)
-#         i += 1.
-
-#     # viewer = Viewer(width=1600, height=900, show_grid=False)
-#     # viewer.view.color = (0.5, 0.5, 0.5, 1)  # change background to black
-#     viewer = Plotter(figsize=(8, 5), dpi=200)
-
-# # ------------------------------------------------------------------------------
-# # Visualize topology diagram
-# # ------------------------------------------------------------------------------
-
-#     viewer.add(topology,
-#                edgewidth=0.3,
-#                show_loads=False)
-
-# # ------------------------------------------------------------------------------
-# # Visualize translated form diagram
-# # ------------------------------------------------------------------------------
-
-#     for form in forms:
-#         viewer.add(form,
-#                    edgewidth=(0.5, 2.),
-#                    show_nodes=True,
-#                    nodesize=2,
-#                    show_loads=False,
-#                    show_edgetext=False,
-#                    show_reactions=False,
-#                    reactionscale=4.0,
-#                    edgetext="key",
-#                    )
-
-# # ------------------------------------------------------------------------------
-# # Show scene
-# # -------------------------------------------------------------------------------
-
-#     viewer.zoom_extents()
-#     viewer.show()
+    plotter.show()

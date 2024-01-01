@@ -13,6 +13,8 @@ from compas_cem.equilibrium import static_equilibrium
 
 import jaxopt
 
+import numpy as np
+
 from jax import jit
 from jax import vmap
 
@@ -32,13 +34,17 @@ from jax_fdm.visualization import Viewer as ViewerFD
 
 
 VIEW = True
-OPTIMIZE = True  #True
+OPTIMIZE = True
+PLOT_LOSS = True
+EXPORT_LOSS = True
+EXPORT_JSON = True
 
 q0 = 1.0
-qmin, qmax = 1e-3, jnp.inf  # 0, 30 cablenet
+qmin, qmax = 1e-3, 30.0  # 0, 30 cablenet
+qmin_cem, qmax_cem = -np.inf, np.inf
 
 target_length_ratio_fd = 1.0
-target_force_fd = 8.0
+target_force_fd = 10.0
 
 # ------------------------------------------------------------------------------
 # Data
@@ -61,6 +67,7 @@ network.edges_forcedensities(q=q0)
 
 topology = TopologyDiagram.from_json(IN_DECK)
 assert topology.number_of_indirect_deviation_edges() == 0
+topology_copy = topology.copy()
 
 form = static_equilibrium(topology)
 
@@ -93,6 +100,7 @@ for node in topology.nodes():
 
         _load = topology.node_load(node)
         network.node_load(key, _load)
+
         # remove supports from cablenet at interface with deck
         if network.is_node_support(key):
             network.node_attribute(key, "is_support", False)
@@ -149,21 +157,26 @@ for node in nodes_cem_target:
     xyz = network.node_coordinates(node)
     key = gkey_key.get(geometric_key(xyz))
 
-    if topology.is_node_origin(key):
-        xyz_target.append(topology.node_coordinates(key))
+    has_connected_supports = any(topology_copy.is_node_support(n) for n in topology_copy.neighbors(key))
 
+    if topology.is_node_origin(key) and has_connected_supports:
+        xyz_target.append(topology.node_coordinates(key))
         nodes_xyz_opt.append(node)
+
         index = fd_structure.node_index[node]
         indices_xyz_opt.append(index)
+
     else:
         xyz_line_target.append(topology.node_coordinates(key))
-
         nodes_xyz_line_opt.append(node)
+
         index = fd_structure.node_index[node]
         indices_xyz_line_opt.append(index)
 
 xyz_target_copy = xyz_target[:]
 xyz_target = jnp.asarray(xyz_target)
+
+xyz_line_target_copy = xyz_line_target[:]
 xyz_line_target = jnp.asarray(xyz_line_target)
 lines_target = (xyz_line_target, xyz_line_target + jnp.array([0.0, 0.0, 1.0]))
 
@@ -214,6 +227,7 @@ if OPTIMIZE:
         forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
         goal_force_fd = jnp.sum((forces_pred_fd - target_force_fd) ** 2)
 
+        # return goal_xyz_fd + goal_xyz_line_fd
         return goal_xyz_fd + goal_xyz_line_fd + goal_length_fd + goal_force_fd
 
     # set tree filtering specification
@@ -227,12 +241,27 @@ if OPTIMIZE:
     blow = []
     blup = []
     gkey_key = topology.gkey_key()
+
     for edge in network.edges():
         edge_topo = [gkey_key.get(geometric_key(network.node_coordinates(node))) for node in edge]
         # if edge is in topology, can take tension and compression:
-        if all(edge_topo):
-            blow.append(-qmax)
-            blup.append(qmax)
+
+        if None not in edge_topo:
+
+            blow.append(qmin_cem)
+            blup.append(qmax_cem)
+
+            # specialized
+            # _force = form.edge_force(edge_topo)
+            # # compression ff
+            # if _force <= 0.0:
+            #     blow.append(-qmax)
+            #     blup.append(-qmin)
+            # # tension
+            # else:
+            #     blow.append(qmin)
+            #     blup.append(qmax)
+
         else:
             blow.append(qmin)
             blup.append(qmax)
@@ -248,8 +277,9 @@ if OPTIMIZE:
     print(f"{loss=}")
 
     # solve optimization problem with scipy
-    print("\n***Optimizing CEM and FDM jointly with scipy***")
+    print("\n***Optimizing FDM alone with scipy***")
     optimizer = jaxopt.ScipyBoundedMinimize
+    # optimizer = jaxopt.ScipyMinimize
 
     history = []
 
@@ -260,11 +290,12 @@ if OPTIMIZE:
                     method="L-BFGS-B",
                     jit=True,
                     tol=1e-6,  # 1e-12,
-                    maxiter=5000,
+                    maxiter=500, # 5000,
                     callback=recorder)
 
     start = time()
     opt_result = opt.run(diff_model, bounds, static_model)
+    # opt_result = opt.run(diff_model, static_model)
     print(f"Opt time: {time() - start:.4f} sec")
     diff_model_star, opt_state_star = opt_result
 
@@ -279,14 +310,32 @@ if OPTIMIZE:
     network_opt = network_updated(fd_structure.network, fd_eqstate_star)
 
 # ------------------------------------------------------------------------------
-# Plott loss function
+# Plot loss function
 # ------------------------------------------------------------------------------
 
+if EXPORT_JSON:
+
+    filepath_net = os.path.abspath(os.path.join(HERE, "data/net_hexagon_3d_fdm_opt.json"))
+    network_opt.to_json(filepath_net)
+    print(f"\nExported optimized deck + cablenet JSON file to {filepath_net}")
+
+# ------------------------------------------------------------------------------
+# Plot loss function
+# ------------------------------------------------------------------------------
+
+if OPTIMIZE and PLOT_LOSS:
     print("\nPlotting loss function...")
     plt.figure(figsize=(8, 5))
     start_time = time()
 
     losses = [loss_fn(h_model, static_model) for h_model in history]
+
+    if EXPORT_LOSS:
+        filepath = "netdeck_3d_fdm_loss.txt"
+        with open(filepath, "w") as file:
+            for loss in losses:
+                file.write(f"{loss}\n")
+        print(f"Saved loss history to {filepath}")
 
     plt.plot(losses, label="Loss FDM")
     plt.xlabel("Optimization iterations")
@@ -323,22 +372,43 @@ if VIEW:
     network_opt.print_stats()
 
     viewer.add(network_opt,
+               nodesize=0.05,
                edgecolor="force",
                show_reactions=True,
-               show_loads=True,
-               edgewidth=(0.01, 0.05),
-               reactionscale=1.0,
-               loadscale=1.0,
-               show_nodes=True,
-               nodecolor=Color.black(),
-               nodesize=0.25,
-               nodes=nodes_xyz_opt,
+               show_loads=False,
+               edgewidth=(0.05, 0.1),
+               show_nodes=False,
+               reactionscale=0.40,
+               reactioncolor=Color.from_rgb255(0, 150, 10)
                )
 
-    from compas.geometry import Point
+    # viewer.add(network_opt,
+    #            edgecolor="force",
+    #            show_reactions=True,
+    #            show_loads=True,
+    #            edgewidth=(0.01, 0.05),
+    #            reactionscale=1.0,
+    #            loadscale=1.0,
+    #            show_nodes=True,
+    #            nodecolor=Color.black(),
+    #            nodesize=0.25,
+    #            nodes=nodes_xyz_opt,
+    #            )
 
-    for xyz in xyz_target_copy:
+    from compas.geometry import Point, Line
+
+    for node, xyz in zip(nodes_xyz_opt, xyz_target_copy):
+
         pt = Point(*xyz)
-        viewer.add(pt, color=Color.lime())
+        viewer.add(pt, color=Color.orange())
+        xyz_pred = network_opt.node_coordinates(node)
+        viewer.add(Line(xyz_pred, xyz), color=Color.orange())
+
+    for node, xyz in zip(nodes_xyz_line_opt, xyz_line_target_copy):
+
+        pt = Point(*xyz)
+        viewer.add(pt, color=Color.purple())
+        xyz_pred = network_opt.node_coordinates(node)
+        viewer.add(Line(xyz_pred, xyz), color=Color.purple())
 
     viewer.show()

@@ -33,13 +33,15 @@ from jax_fdm.equilibrium import EquilibriumModel as FDModel
 from jax_fdm.equilibrium import EquilibriumStructure as FDStructure
 from jax_fdm.equilibrium import network_updated
 
-from jax_fdm.visualization import Plotter as PlotterFD
 from jax_fdm.visualization import Viewer as ViewerFD
 
 
 VIEW = True
-PLOT = False
+
 RECORD = True
+PLOT_LOSS = True
+EXPORT_LOSS = True
+EXPORT_JSON = True
 
 OPTIMIZE_CEM = True
 OPTIMIZE_FDM = True
@@ -51,7 +53,7 @@ qmin, qmax = 1e-3, 30.0
 fmin, fmax = -50.0, 50.0
 
 target_length_ratio_fd = 1.0  # 0.9
-target_force_fd = 8.0
+target_force_fd = 10.0
 weight_xyz = 1.0
 
 # ------------------------------------------------------------------------------
@@ -162,6 +164,8 @@ for node in nodes_ce_xyz_opt:
     index = ce_structure.node_index[node]
     indices_ce_xyz_opt.append(index)
     xyz_ce_target.append(topology.node_coordinates(node))
+
+xyz_ce_target_copy = xyz_ce_target[:]
 xyz_ce_target = jnp.asarray(xyz_ce_target)
 lines_ce_target = (xyz_ce_target, xyz_ce_target + jnp.array([0.0, 0.0, 1.0]))
 
@@ -180,15 +184,16 @@ for node in topology.nodes():
 indices_fd_res_opt = indices_fdm
 
 indices_fd_xyz_opt = []
-fd_xyz_target = []
+xyz_fd_target = []
 # for node in network.nodes_where({"is_target": True}):
 for node in nodes_fdm:
     index = fd_structure.node_index[node]
     indices_fd_xyz_opt.append(index)
     xyz = network.node_coordinates(node)
-    fd_xyz_target.append(xyz)
+    xyz_fd_target.append(xyz)
 
-xyz_fd_target = jnp.asarray(fd_xyz_target)
+xyz_fd_target_copy = xyz_fd_target[:]
+xyz_fd_target = jnp.asarray(xyz_fd_target)
 
 indices_fd_length_opt = []
 fd_lengths_target = []
@@ -254,6 +259,7 @@ if OPTIMIZE_CEM:
     # solve optimization problem with scipy
     print("\n***Optimizing CEM alone with scipy***")
     optimizer = jaxopt.ScipyBoundedMinimize
+    # optimizer = jaxopt.ScipyMinimize
 
     history_cem = []
 
@@ -264,11 +270,12 @@ if OPTIMIZE_CEM:
                     method="L-BFGS-B",
                     jit=True,
                     tol=1e-6,  # 1e-12,
-                    maxiter=5000,
+                    maxiter=500,
                     callback=recorder_cem)
 
     start = time()
     opt_result = opt.run(ce_diff_model, ce_bounds, ce_static_model)
+    # opt_result = opt.run(ce_diff_model, ce_static_model)
     print(f"Opt time: {time() - start:.4f} sec")
     ce_diff_model_star, ce_opt_state_star = opt_result
 
@@ -321,7 +328,11 @@ if OPTIMIZE_FDM:
         return loss_fd
 
     # update applied loads to fd model based on reaction from optimized ce model
-    ce_reactions = ce_eqstate_star.reactions[indices_cem, :]
+    if OPTIMIZE_CEM:
+        ce_reactions = ce_eqstate_star.reactions[indices_cem, :]
+    else:
+        ce_reactions = ceq.reactions[indices_cem, :]
+
     loads = fd_model.loads.at[indices_fdm, :].set(-ce_reactions)
     fd_model = eqx.tree_at(lambda tree: (tree.loads), fd_model, replace=(loads))
 
@@ -348,6 +359,7 @@ if OPTIMIZE_FDM:
     # solve optimization problem with scipy
     print("\n***Optimizing FDM alone with scipy***")
     optimizer = jaxopt.ScipyBoundedMinimize
+    # optimizer = jaxopt.ScipyMinimize
 
     history_fdm = []
 
@@ -358,11 +370,12 @@ if OPTIMIZE_FDM:
                     method="L-BFGS-B",
                     jit=True,
                     tol=1e-6,  # 1e-12,
-                    maxiter=5000,
+                    maxiter=500,
                     callback=recorder_fdm)
 
     start = time()
     opt_result = opt.run(fd_diff_model, fd_bounds, fd_static_model)
+    # opt_result = opt.run(fd_diff_model, fd_static_model)
     print(f"Opt time: {time() - start:.4f} sec")
     fd_diff_model_star, fd_opt_state_star = opt_result
 
@@ -377,49 +390,64 @@ if OPTIMIZE_FDM:
     network_opt = network_updated(fd_structure.network, fd_eqstate_star)
 
 # ------------------------------------------------------------------------------
+# Export loss function
+# ------------------------------------------------------------------------------
+
+if EXPORT_JSON:
+
+    filepath_deck = os.path.abspath(os.path.join(HERE, "data/deck_3d_separated_opt.json"))
+    form_opt.to_json(filepath_deck)
+    filepath_net = os.path.abspath(os.path.join(HERE, "data/net_hexagon_3d_separated_opt.json"))
+    network_opt.to_json(filepath_net)
+    print(f"\nExported optimized deck JSON file to {filepath_deck}")
+    print(f"\nExported optimized cablenet JSON file to {filepath_net}")
+
+# ------------------------------------------------------------------------------
 # Plot loss function
 # ------------------------------------------------------------------------------
 
+if PLOT_LOSS:
     print("\nPlotting loss functions...")
     plt.figure(figsize=(8, 5))
     start_time = time()
 
-    losses = [ce_loss_fn(h_model, ce_static_model) for h_model in history_cem]
-    plt.plot(losses, label="Loss CEM")
+    losses_cem = [ce_loss_fn(h_model, ce_static_model) for h_model in history_cem]
+    plt.plot(losses_cem, label="Loss CEM")
 
-    losses = [fd_loss_fn(h_model, fd_static_model) for h_model in history_fdm]
-    plt.plot(losses, label="Loss FDM")
+    losses_fdm = [fd_loss_fn(h_model, fd_static_model) for h_model in history_fdm]
+    plt.plot(losses_fdm, label="Loss FDM")
+
+    losses = losses_cem + losses_fdm
+
+    if EXPORT_LOSS:
+        filepath = "netdeck_3d_separated_loss.txt"
+        with open(filepath, "w") as file:
+            for loss in losses:
+                file.write(f"{loss}\n")
+        print(f"Saved loss history to {filepath}")
+
+    plt.plot(losses, label="Loss CEM + FDM")
 
     plt.xlabel("Optimization iterations")
     plt.ylabel("Loss")
     plt.yscale("log")
-    # plt.xscale("log")
     plt.grid()
     plt.legend()
+
     print(f"Plotting time: {(time() - start_time):.4} seconds")
     plt.show()
-
 
 # ------------------------------------------------------------------------------
 # Viewer
 # ------------------------------------------------------------------------------
 
 if VIEW:
-    viewer = ViewerFD(width=900, height=900, show_grid=False)
+    viewer = ViewerFD(width=1000, height=1000, show_grid=False, viewmode="lighted")
 
     viewer.view.camera.distance = 28.0
     viewer.view.camera.position = (-13.859, 20.460, 14.682)
     viewer.view.camera.target = (1.008, 4.698, -3.034)
     viewer.view.camera.rotation = (0.885, 0.000, -2.385)
-
-    for _network in [network, topology]:
-        nodes, edges = _network.to_nodes_and_edges()
-        _network = Network.from_nodes_and_edges(nodes, edges)
-        viewer.add(_network,
-                   show_points=False,
-                   linewidth=0.5,
-                   linecolor=Color.grey(),
-                   )
 
     form_opt_view = form_opt.copy(FDNetwork)
 
@@ -449,28 +477,66 @@ if VIEW:
     print("\nDeck")
     form_opt_view.print_stats()
 
+    _edges = []
+    for edge in form_opt_view.edges():
+        if topology.is_auxiliary_trail_edge(edge):
+            continue
+        u, v = edge
+        if not form_opt_view.has_edge(u, v):
+            u, v = v, u
+        _edges.append((u, v))
+
+    _nodes = []
+    for node in topology.nodes():
+        if node in nodes_ce_res_opt:
+            continue
+        if topology.is_node_support(node):
+            nbr = topology.neighbors(node).pop()
+            if topology.is_node_origin(nbr):
+                continue
+
+        _nodes.append(node)
+
     viewer.add(form_opt_view,
-               show_nodes=True,
+               show_nodes=False,
                nodesize=0.1,
                nodecolor=Color.black(),
-               # nodes=nodes_ce_res_opt,
-               # edges=[edge for edge in form_opt.edges() if not topology.is_auxiliary_trail_edge(edge)],
+               nodes=_nodes, # nodes_ce_res_opt,
+               edges=_edges,
                edgecolor="force",
-               edgewidth=(0.01, 0.1),
+               edgewidth=(0.05, 0.1),
                show_reactions=True,
                show_loads=True,
-               loadscale=1.0,
-               reactionscale=1.0
+               loadscale=1.5,
+               reactionscale=0.4,
+               reactioncolor=Color.from_rgb255(0, 150, 10)
                )
 
     viewer.add(network_opt,
                nodesize=0.05,
                edgecolor="force",
                show_reactions=True,
-               show_loads=True,
-               edgewidth=(0.01, 0.1),
+               show_loads=False,
+               edgewidth=(0.05, 0.1),
                show_nodes=True,
-               reactionscale=1.0
+               reactionscale=0.40,
+               reactioncolor=Color.from_rgb255(0, 150, 10)
                )
+
+    from compas.geometry import Point, Line
+
+    for node, xyz in zip(nodes_ce_xyz_opt, xyz_ce_target_copy):
+
+        pt = Point(*xyz)
+        viewer.add(pt, color=Color.orange())
+        xyz_pred = form_opt_view.node_coordinates(node)
+        viewer.add(Line(xyz_pred, xyz), color=Color.orange())
+
+    for node, xyz in zip(nodes_fdm, xyz_fd_target_copy):
+
+        pt = Point(*xyz)
+        viewer.add(pt, color=Color.purple())
+        xyz_pred = network_opt.node_coordinates(node)
+        viewer.add(Line(xyz_pred, xyz), color=Color.purple())
 
     viewer.show()

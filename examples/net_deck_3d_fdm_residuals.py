@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 
 from time import time
 
+import numpy as np
+
 from compas.datastructures import Network
 from compas.colors import Color
 from compas.utilities import geometric_key
@@ -32,10 +34,14 @@ from jax_fdm.visualization import Viewer as ViewerFD
 
 
 VIEW = True
-OPTIMIZE = True  # True
+OPTIMIZE = True
+PLOT_LOSS = True
+EXPORT_LOSS = True
+
 
 q0 = 1.0
 qmin, qmax = 1e-3, jnp.inf  # 0, 30 cablenet
+qmin_cem, qmax_cem = -np.inf, np.inf
 
 target_length_ratio_fd = 1.0
 target_force_fd = 8.0
@@ -78,9 +84,10 @@ for edge in topology.edges():
             else:
                 nodes_cem_residual.append(node)
 
-for node in topology.origin_nodes():
-    if node not in deletable_nodes:
-        nodes_cem_residual.append(node)
+# origin nodes on chords
+# for node in topology.origin_nodes():
+#     if node not in deletable_nodes:
+#         nodes_cem_residual.append(node)
 
 for node in deletable_nodes:
     topology.delete_node(node)
@@ -91,6 +98,7 @@ for node in deletable_nodes:
 
 # copy nodes
 nodes_fd_xyz_target = []
+nodes_fd_xyz_line_target = []
 nodes_fd_residual_target = []
 
 gkey_key = network.gkey_key()
@@ -101,14 +109,15 @@ for node in topology.nodes():
 
     # node exists in fdm cablenet
     if key:
-        nodes_fd_residual_target.append(key)
+        # nodes_fd_residual_target.append(key)
+        nodes_fd_xyz_target.append(key)
 
         _load = topology.node_load(node)
         network.node_load(key, _load)
 
         # remove supports from cablenet at interface with deck
-        # if network.is_node_support(key):
-        #    network.node_attribute(key, "is_support", False)
+        if network.is_node_support(key):
+            network.node_attribute(key, "is_support", False)
         continue
 
     # node does not exist, then add
@@ -127,7 +136,7 @@ for node in topology.nodes():
 
     # cem chord
     else:
-        nodes_fd_xyz_target.append(node_new)
+        nodes_fd_xyz_line_target.append(node_new)
 
 # copy edges
 gkey_key = network.gkey_key()
@@ -160,18 +169,30 @@ for node in nodes_fd_residual_target:
     index = fd_structure.node_index[node]
     indices_residual_opt.append(index)
 
-# xyz line goals
-indices_xyz_line_opt = []
+# xyz goals
+indices_xyz_opt = []
 xyz_target = []
 
 for node in nodes_fd_xyz_target:
     index = fd_structure.node_index[node]
-    indices_xyz_line_opt.append(index)
+    indices_xyz_opt.append(index)
     xyz_target.append(network.node_coordinates(node))
 
 xyz_target_copy = xyz_target[:]
 xyz_target = jnp.asarray(xyz_target)
-lines_target = (xyz_target, xyz_target + jnp.array([0.0, 0.0, 1.0]))
+
+# xyz line goals
+indices_xyz_line_opt = []
+xyz_line_target = []
+
+for node in nodes_fd_xyz_line_target:
+    index = fd_structure.node_index[node]
+    indices_xyz_line_opt.append(index)
+    xyz_line_target.append(network.node_coordinates(node))
+
+xyz_line_target_copy = xyz_line_target[:]
+xyz_line_target = jnp.asarray(xyz_line_target)
+lines_target = (xyz_line_target, xyz_line_target + jnp.array([0.0, 0.0, 1.0]))
 
 # length goals
 indices_fd_length_opt = []
@@ -206,11 +227,16 @@ if OPTIMIZE:
         residual_pred = fd_eqstate.residuals[indices_residual_opt, :]
         goal_residual_fd = jnp.sum((residual_pred - 0.0) ** 2)
 
+        # goal xyz
+        xyz_pred = fd_eqstate.xyz[indices_xyz_opt, :]
+        assert xyz_pred.shape == xyz_target.shape
+        goal_xyz_fd = jnp.sum((xyz_pred - xyz_target) ** 2)
+
         # goal xyz line
         xyz_line_pred = fd_eqstate.xyz[indices_xyz_line_opt, :]
-        xyz_target = vmap(closest_point_on_line)(xyz_line_pred, lines_target)
+        xyz_online_target = vmap(closest_point_on_line)(xyz_line_pred, lines_target)
         assert xyz_line_pred.shape == xyz_target.shape
-        goal_xyz_line_fd = jnp.sum((xyz_line_pred - xyz_target) ** 2)
+        goal_xyz_line_fd = jnp.sum((xyz_line_pred - xyz_online_target) ** 2)
 
         # goal length
         lengths_pred_fd = fd_eqstate.lengths[indices_fd_length_opt, :].ravel()
@@ -222,11 +248,7 @@ if OPTIMIZE:
         forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
         goal_force_fd = jnp.sum((forces_pred_fd - target_force_fd) ** 2)
 
-        return goal_residual_fd + goal_xyz_line_fd + goal_length_fd + goal_force_fd
-        # return goal_xyz_line_fd
-        # return goal_xyz_line_fd + goal_length_fd
-        # return goal_residual_fd
-        # return goal_xyz_line_fd + goal_residual_fd
+        return goal_residual_fd + goal_xyz_fd + goal_xyz_line_fd + goal_length_fd + goal_force_fd
 
     # set tree filtering specification
     filter_spec = jtu.tree_map(lambda _: False, model)
@@ -242,9 +264,9 @@ if OPTIMIZE:
     for edge in network.edges():
         edge_topo = [gkey_key.get(geometric_key(network.node_coordinates(node))) for node in edge]
         # if edge is in topology, can take tension or compression depending on initial state:
-        if all(edge_topo):
-            blow.append(-qmax)
-            blup.append(qmax)
+        if None not in edge_topo:
+            blow.append(qmin_cem)
+            blup.append(qmax_cem)
 
             # specialized
             # _force = form.edge_force(edge_topo)
@@ -271,8 +293,9 @@ if OPTIMIZE:
     print(f"{loss=}")
 
     # solve optimization problem with scipy
-    print("\n***Optimizing CEM and FDM jointly with scipy***")
+    print("\n***Optimizing FDM residuals alone with scipy***")
     optimizer = jaxopt.ScipyBoundedMinimize
+    optimizer = jaxopt.ScipyMinimize
 
     history = []
 
@@ -283,11 +306,12 @@ if OPTIMIZE:
                     method="L-BFGS-B",
                     jit=True,
                     tol=1e-6,  # 1e-12,
-                    maxiter=5000,
+                    maxiter=500,
                     callback=recorder)
 
     start = time()
-    opt_result = opt.run(diff_model, bounds, static_model)
+    # opt_result = opt.run(diff_model, bounds, static_model)
+    opt_result = opt.run(diff_model, static_model)
     print(f"Opt time: {time() - start:.4f} sec")
     diff_model_star, opt_state_star = opt_result
 
@@ -302,14 +326,22 @@ if OPTIMIZE:
     network_opt = network_updated(fd_structure.network, fd_eqstate_star)
 
 # ------------------------------------------------------------------------------
-# Plott loss function
+# Plot loss function
 # ------------------------------------------------------------------------------
 
+if PLOT_LOSS:
     print("\nPlotting loss function...")
     plt.figure(figsize=(8, 5))
     start_time = time()
 
     losses = [loss_fn(h_model, static_model) for h_model in history]
+
+    if EXPORT_LOSS:
+        filepath = "netdeck_3d_fdm_residuals_loss.txt"
+        with open(filepath, "w") as file:
+            for loss in losses:
+                file.write(f"{loss}\n")
+        print(f"Saved loss history to {filepath}")
 
     plt.plot(losses, label="Loss FDM")
     plt.xlabel("Optimization iterations")
@@ -346,26 +378,44 @@ if VIEW:
     network_opt.print_stats()
 
     viewer.add(network_opt,
+               nodesize=0.05,
                edgecolor="force",
                show_reactions=True,
                show_loads=True,
-               edgewidth=(0.01, 0.05),
-               reactionscale=1.0,
-               loadscale=1.0,
+               edgewidth=(0.05, 0.1),
                show_nodes=False,
-               nodesize=0.15,
-               nodes=None, # nodes_fd_xyz_target,
-               # nodecolor=Color.black(),
+               reactionscale=0.40,
+               # reactioncolor=Color.from_rgb255(0, 150, 10)
+               reactioncolor=Color.pink(),
                )
+
+    # viewer.add(network_opt,
+    #            edgecolor="force",
+    #            show_reactions=True,
+    #            show_loads=True,
+    #            edgewidth=(0.01, 0.05),
+    #            reactionscale=1.0,
+    #            loadscale=1.0,
+    #            show_nodes=True,
+    #            nodesize=0.15,
+    #            # nodes=nodes_fd_xyz_target,
+    #            # nodecolor=Color.black(),
+    #            )
 
     from compas.geometry import Point, Line
 
     for node, xyz in zip(nodes_fd_xyz_target, xyz_target_copy):
 
         pt = Point(*xyz)
-        viewer.add(pt, color=Color.grey())
-
+        viewer.add(pt, color=Color.orange())
         xyz_pred = network_opt.node_coordinates(node)
-        viewer.add(Line(xyz_pred, xyz), color=Color.black())
+        viewer.add(Line(xyz_pred, xyz), color=Color.orange())
+
+    for node, xyz in zip(nodes_fd_xyz_line_target, xyz_line_target_copy):
+
+        pt = Point(*xyz)
+        viewer.add(pt, color=Color.purple())
+        xyz_pred = network_opt.node_coordinates(node)
+        viewer.add(Line(xyz_pred, xyz), color=Color.purple())
 
     viewer.show()

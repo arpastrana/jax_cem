@@ -2,6 +2,8 @@ import os
 
 import matplotlib.pyplot as plt
 
+from math import fabs
+
 from functools import partial
 from time import time
 
@@ -11,6 +13,7 @@ from compas.geometry import Point
 from compas.geometry import Translation
 from compas.geometry import scale_vector
 from compas.utilities import geometric_key
+from compas.utilities import remap_values
 
 from compas_cem.diagrams import TopologyDiagram
 
@@ -44,12 +47,14 @@ from jax_fdm.equilibrium import network_updated
 from jax_fdm.visualization import Plotter as PlotterFD
 
 
+PLOT = True
 PLOT_LOSS = False
-VIEW = True
-OPTIMIZE = False
+PLOT_SAVE = False
+EXPORT_LOSS = True
+OPTIMIZE = True
 FIX_INTERFACE = False
 
-q0 = 2.0
+q0 = 1.5
 target_force_fd = 5
 target_length_ratio_fd = 1.0
 weight_xyz = 1.0
@@ -347,7 +352,17 @@ if OPTIMIZE:
     network_opt = network_updated(fd_structure.network, fd_eqstate_star)
 
 # ------------------------------------------------------------------------------
-# Plott loss function
+# Export loss function
+# ------------------------------------------------------------------------------
+
+if EXPORT_LOSS:
+    losses = [loss_fn(h_model, static_model) for h_model in history]
+    with open("netdeck_integrated_loss.txt", "w") as file:
+        for loss in losses:
+            file.write(f"{loss}\n")
+
+# ------------------------------------------------------------------------------
+# Plot loss function
 # ------------------------------------------------------------------------------
 
     if PLOT_LOSS:
@@ -379,61 +394,86 @@ network_opt.print_stats(more_stats)
 # Plotter
 # ------------------------------------------------------------------------------
 
-plotter = PlotterFD(figsize=(8, 5), dpi=200)
+if PLOT:
 
-for _network in [network, topology]:
-    nodes, edges = _network.to_nodes_and_edges()
+    plotter = PlotterFD(figsize=(8, 5), dpi=200)
 
-    edges = list(_network.edges())
-    if isinstance(_network, TopologyDiagram):
-        _edges = []
-        for edge in edges:
-            u, v = edge
-            edge_rev = v, u
-            if _network.is_auxiliary_trail_edge(edge) or _network.is_auxiliary_trail_edge(edge_rev):
-                continue
-            _edges.append(edge)
-        edges = _edges
+    for _network in [network, topology]:
+        nodes, edges = _network.to_nodes_and_edges()
 
-    key_index = dict((key, index) for index, key in enumerate(_network.nodes()))
-    nodes = [_network.node_coordinates(key) for key in _network.nodes()]
-    edges = [(key_index[u], key_index[v]) for u, v in edges]
+        edges = list(_network.edges())
+        if isinstance(_network, TopologyDiagram):
+            _edges = []
+            for edge in edges:
+                u, v = edge
+                edge_rev = v, u
+                if _network.is_auxiliary_trail_edge(edge) or _network.is_auxiliary_trail_edge(edge_rev):
+                    continue
+                _edges.append(edge)
+            edges = _edges
 
-    _network = Network.from_nodes_and_edges(nodes, edges)
-    plotter.add(_network,
-                show_nodes=False,
-                edgewidth=0.5,
-                edgecolor={edge: Color.grey() for edge in _network.edges()})
+        key_index = dict((key, index) for index, key in enumerate(_network.nodes()))
+        nodes = [_network.node_coordinates(key) for key in _network.nodes()]
+        edges = [(key_index[u], key_index[v]) for u, v in edges]
 
-for xyzs in xyz_ce_target, fd_xyz_target:
-    for xyz in xyzs:
-        point = Point(*xyz)
-        plotter.add(point, size=5, color=Color.orange())
+        _network = Network.from_nodes_and_edges(nodes, edges)
+        plotter.add(_network,
+                    show_nodes=False,
+                    edgewidth=0.5,
+                    edgecolor={edge: Color.grey() for edge in _network.edges()})
 
-plotter.add(form_opt,
-            nodesize=4,
-            edgewidth=(1., 3.),
-            edgetext="key",
-            show_nodes=False,
-            show_edgetext=False,
-            show_reactions=True,
-            show_loads=False,
-            reactioncolor=Color.from_rgb255(0, 150, 10),
-            reactionscale=0.5
-            )
+    deletable = []
+    for node in topology.nodes():
+        if topology.is_node_support(node):
+            neighbor = topology.neighbors(node).pop()
+            if topology.is_node_origin(neighbor):
+                deletable.append(node)
 
-plotter.add(network_opt,
-            nodesize=4,
-            edgecolor="force",
-            show_reactions=True,
-            show_loads=False,
-            edgewidth=(1., 3.),
-            show_edgetext=False,
-            show_nodes=False,
-            reactioncolor=Color.from_rgb255(0, 150, 10),
-            reactionscale=0.5
-            )
+    for node in deletable:
+        form_opt.delete_node(node)
 
-plotter.zoom_extents()
-# plotter.save("net_deck_integrated.pdf")
-plotter.show()
+    # manually calculate edge widths
+    width = (1.0, 3.0)
+    width_min, width_max = width
+    forces_form = [fabs(form_opt.edge_force(edge)) for edge in form_opt.edges()]
+    forces_network = [fabs(network_opt.edge_force(edge)) for edge in network_opt.edges()]
+    forces = forces_form + forces_network
+    force_max = max(forces)
+    force_min = min(forces)
+
+    widths_form = remap_values(forces_form, width_min, width_max, force_min, force_max)
+    widths_network = remap_values(forces_network, width_min, width_max, force_min, force_max)
+
+    plotter.add(form_opt,
+                nodesize=20,
+                edgewidth={edge: width for edge, width in zip(form_opt.edges(), widths_form)},
+                edgetext="key",
+                show_nodes=True,
+                show_edgetext=False,
+                show_reactions=False,
+                show_loads=False,
+                reactioncolor=Color.from_rgb255(0, 150, 10),
+                reactionscale=0.5,
+                sizepolicy="absolute",
+                )
+
+    plotter.add(network_opt,
+                nodesize=20,
+                edgecolor="force",
+                show_reactions=False,
+                show_loads=False,
+                edgewidth={edge: width for edge, width in zip(network_opt.edges(), widths_network)},
+                show_edgetext=False,
+                show_nodes=True,
+                reactioncolor=Color.from_rgb255(0, 150, 10),
+                reactionscale=-0.5,
+                sizepolicy="absolute"
+                )
+
+    plotter.zoom_extents()
+    if PLOT_SAVE:
+        filename = "netdeck_integrated.pdf"
+        plotter.save(filename, transparent=True)
+        print(f"Saved pdf to {filename}")
+        plotter.save(filename)
+    plotter.show()
