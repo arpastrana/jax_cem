@@ -41,6 +41,7 @@ OPTIMIZE = True
 
 PLOT_LOSS = True
 EXPORT_LOSS = False
+
 EXPORT_JSON = False
 
 q0 = 2.0
@@ -50,6 +51,7 @@ fmin_cable = 1e-2
 fmax_tie = -1e-2
 zmin = 0.0
 zmax = 0.5
+pz_spoke = -0.1
 
 # weights ce
 weight_xyz_ce = 1.0
@@ -162,9 +164,14 @@ indices_spoke_fdm = []
 for node in nodes_spoke_fdm:
     indices_spoke_fdm.append(fd_structure.node_index[node])
 
+# ------------------------------------------------------------------------------
+# Loads
+# ------------------------------------------------------------------------------
+
+load_spoke_weight = jnp.array([0.0, 0.0, pz_spoke])
 
 # ------------------------------------------------------------------------------
-# Custom equilibrium model
+# Mixed equilibrium model
 # ------------------------------------------------------------------------------
 
 class MixedEquilibriumModel(eqx.Module):
@@ -191,6 +198,7 @@ class MixedEquilibriumModel(eqx.Module):
                           replace=(loads, xyz))
         ce_equilibrium = cem(ce_structure)
 
+        # fd_spoke_reactions = fd_spoke_reactions + load_spoke_weight
         loads = self.cem2.loads.at[indices_spoke_cem, :].set(fd_spoke_reactions)
         cem2 = eqx.tree_at(lambda tree: (tree.loads), self.cem2, replace=(loads))
         ce_spoke_equilibrium = cem2(ce_spoke_structure)
@@ -470,12 +478,15 @@ if OPTIMIZE:
 
 if OPTIMIZE and EXPORT_JSON:
 
-    filepath_deck = os.path.abspath(os.path.join(HERE, f"data/stadium_arch_integrated_targetforce{int(target_force_fd)}_opt.json"))
-    form_opt.to_json(filepath_deck)
-    filepath_net = os.path.abspath(os.path.join(HERE, f"data/stadium_cablenet_integrated_targetforce{int(target_force_fd)}_opt.json"))
+    filepath_arch = os.path.abspath(os.path.join(HERE, f"data/stadium_arch_opt.json"))
+    form_opt.to_json(filepath_arch)
+    filepath_net = os.path.abspath(os.path.join(HERE, f"data/stadium_cablenet_opt.json"))
     network_opt.to_json(filepath_net)
-    print(f"\nExported optimized deck JSON file to {filepath_deck}")
+    filepath_spoke = os.path.abspath(os.path.join(HERE, f"data/stadium_spoke_opt.json"))
+    form_spoke_opt.to_json(filepath_spoke)
+    print(f"\nExported optimized arch JSON file to {filepath_arch}")
     print(f"\nExported optimized cablenet JSON file to {filepath_net}")
+    print(f"\nExported optimized spoke JSON file to {filepath_spoke}")
 
 # ------------------------------------------------------------------------------
 # Plot loss function
