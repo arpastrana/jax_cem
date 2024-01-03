@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 
 from time import time
 
-from compas.datastructures import Mesh
 from compas.colors import Color
 from compas.geometry import scale_vector
 from compas.utilities import geometric_key
@@ -66,7 +65,7 @@ weight_xyz_fd = 0.0
 weight_force = 1.0
 target_force_fd = 0.2
 
-weight_reg_fd = 1e-2  # 1e-2
+weight_reg_fd = 1e-2
 
 # weights ce spoke
 weight_xyz_ce_spoke = 0.1
@@ -79,8 +78,6 @@ HERE = os.path.dirname(__file__)
 IN_NET = os.path.abspath(os.path.join(HERE, "data/stadium_cablenet.json"))
 IN_ARCH = os.path.abspath(os.path.join(HERE, "data/stadium_arch.json"))
 IN_SPOKE = os.path.abspath(os.path.join(HERE, "data/stadium_spoke.json"))
-# IN_MESH_DECK = os.path.abspath(os.path.join(HERE, "data/deck_mesh_3d.json"))
-# mesh = Mesh.from_json(IN_MESH_DECK)
 
 # ------------------------------------------------------------------------------
 # Load from JSON

@@ -54,30 +54,35 @@ name_version = "opt"
 name_arch = "stadium_arch"
 name_cablenet = "stadium_cablenet"
 name_spoke = "stadium_spoke"
-# name_mesh = "deck_mesh_3d"
+name_mesh = "stadium_spoke_mesh"
 
 DISPLAY_ARCH = True
 DISPLAY_CABLENET = True
 DISPLAY_SPOKE = True
+DISPLAY_MESH = True
+
+DELETE_AUX_TRAILS = True
 
 VIEW = True
 
-PLOT = False
+PLOT = True
 PLOT_SAVE = False
 
 PLOT_MESH = True
 PLOT_DECK_LINES = False
-PLOT_CHORD_TARGET_LINES = True
+PLOT_CHORD_TARGET_LINES = False
 
-plot_transforms = {# "3d": {"figsize": (6, 6), "padding": -0.1},
-                   # "top": {"figsize": (6, 6), "padding": -1.0},
-                   "x": {"figsize": (6, 6), "padding": -1.0},
+plot_transforms = {
+                   "3d": {"figsize": (6, 6), "padding": 0.0},
+                   "top": {"figsize": (6, 6), "padding": -0.5},
+                   "y": {"figsize": (6, 6), "padding": -0.5},
                    }
 
 edgewidth_view = (0.03, 0.06)
-edgewidth_plot = (1.0, 3.0)
+edgewidth_plot = (0.5, 2.5)
 nodesize = 1.5
-nodesize_factor = 12
+nodesize_factor = 8
+nodesize_factor_xy = 6
 
 color_mesh = Color(0.9, 0.9, 0.9)
 color_pink = Color.from_rgb255(255, 123, 171)
@@ -99,7 +104,8 @@ IN_SPOKE = os.path.abspath(os.path.join(HERE, f"data/{name_spoke}_{name_version}
 
 IN_ARCH_BASE = os.path.abspath(os.path.join(HERE, f"data/{name_arch}.json"))
 IN_NET_BASE = os.path.abspath(os.path.join(HERE, f"data/{name_cablenet}.json"))
-# IN_MESH_DECK_BASE = os.path.abspath(os.path.join(HERE, f"data/{name_mesh}.json"))
+IN_SPOKE_BASE = os.path.abspath(os.path.join(HERE, f"data/{name_spoke}.json"))
+IN_MESH_SPOKE_BASE = os.path.abspath(os.path.join(HERE, f"data/{name_mesh}.json"))
 
 # ------------------------------------------------------------------------------
 # Load from JSON
@@ -107,7 +113,90 @@ IN_NET_BASE = os.path.abspath(os.path.join(HERE, f"data/{name_cablenet}.json"))
 
 cablenet_base = FDNetwork.from_json(IN_NET_BASE)
 arch_base = TopologyDiagram.from_json(IN_ARCH_BASE)
-# mesh = Mesh.from_json(IN_MESH_DECK_BASE)
+spoke_base = TopologyDiagram.from_json(IN_SPOKE_BASE)
+mesh = Mesh.from_json(IN_MESH_SPOKE_BASE)
+
+# ------------------------------------------------------------------------------
+# Functions of functions
+# ------------------------------------------------------------------------------
+
+def form_cem_to_fdnetwork(form):
+    """
+    """
+    network = form.copy(FDNetwork)
+
+    for node in form.nodes():
+        load = form.node_attributes(node, ["qx", "qy", "qz"])
+        network.node_load(node, load)
+
+    for node in form.nodes():
+        if form.is_node_support(node):
+            network.node_support(node)
+            reaction = form.node_attributes(node, ["rx", "ry", "rz"])
+            network.node_attributes(node, ["rx", "ry", "rz"], scale_vector(reaction, -1.0))
+
+    for edge in form.edges():
+        length = form.edge_length(*edge)
+        network.edge_attribute(edge, "length", length)
+
+        force = form.edge_force(edge)
+        _q = force / length
+        network.edge_attribute(edge, "q", _q)
+
+    return network
+
+
+def delete_topology_aux_trails(topology_to_delete, topology):
+    """
+    """
+    deletable = []
+
+    for edge in topology.edges():
+        if not topology.is_auxiliary_trail_edge(edge):
+            continue
+        for node in edge:
+            if topology.is_node_support(node):
+                deletable.append(node)
+
+    for node in deletable:
+        topology_to_delete.delete_node(node)
+
+
+def transform_network_vectors(network, network_ref, attr_names):
+    """
+    """
+    for node in network.nodes():
+        load = network_ref.node_attributes(node, attr_names)
+        xyz = network_ref.node_coordinates(node)
+        load_line = Line(xyz, add_vectors(xyz, load))
+        load_line = load_line.transformed(T)
+        load = subtract_vectors(load_line.end, load_line.start)
+        network.node_attributes(node, attr_names, load)
+
+
+def calculate_edge_widths(networks, width_min, width_max):
+    """
+    """
+    forces_bag = []
+    forces = []
+    for network in networks:
+        _forces = [fabs(network.edge_force(edge)) for edge in network.edges()]
+        forces_bag.extend(_forces)
+        forces.append(_forces)
+
+    force_min = min(forces_bag)
+    force_max = max(forces_bag)
+
+    widths = []
+    widths_bag = []
+    for network, forces in zip(networks, forces):
+        _widths = remap_values(forces, width_min, width_max, force_min, force_max)
+        edgewidths = {edge: width for edge, width in zip(network.edges(), _widths)}
+        widths.append(edgewidths)
+        widths_bag.extend(_widths)
+
+    return widths
+
 
 # ------------------------------------------------------------------------------
 # Indices pre calculation
@@ -157,103 +246,43 @@ arch_base = TopologyDiagram.from_json(IN_ARCH_BASE)
 # Clean up
 # ------------------------------------------------------------------------------
 
-# # delete auxiliary trail edges from deck
-# deletable = []
-# nodes_cem_residual = []
-# for edge in deck_base.edges():
-#     if not deck_base.is_auxiliary_trail_edge(edge):
-#         continue
-#     for node in edge:
-#         if deck_base.is_node_support(node):
-#             deletable.append(node)
-#         else:
-#             nodes_cem_residual.append(node)
-
-# for node in deletable:
-#     deck_base.delete_node(node)
-
 _networks = []
-if DISPLAY_ARCH:
-    arch = TopologyDiagram.from_json(IN_ARCH)
-    # for node in deletable:
-    #    deck.delete_node(node)
-    _networks.append(arch)
-
-if DISPLAY_CABLENET:
-    cablenet = FDNetwork.from_json(IN_NET)
-    _networks.append(cablenet)
+_networks_base = []
 
 if DISPLAY_SPOKE:
     spoke = TopologyDiagram.from_json(IN_SPOKE)
     _networks.append(spoke)
+    _networks_base.append(spoke_base)
+
+if DISPLAY_CABLENET:
+    cablenet = FDNetwork.from_json(IN_NET)
+    _networks.append(cablenet)
+    _networks_base.append(cablenet_base)
+
+if DISPLAY_ARCH:
+    arch = TopologyDiagram.from_json(IN_ARCH)
+    _networks.append(arch)
+    _networks_base.append(arch_base)
 
 # ------------------------------------------------------------------------------
-# Functions of functions
+# Mesh update
 # ------------------------------------------------------------------------------
 
-def form_cem_to_fdnetwork(form):
-    """
-    """
-    network = form.copy(FDNetwork)
-
-    for node in form.nodes():
-        load = form.node_attributes(node, ["qx", "qy", "qz"])
-        network.node_load(node, load)
-
-    for node in form.nodes():
-        if form.is_node_support(node):
-            network.node_support(node)
-            reaction = form.node_attributes(node, ["rx", "ry", "rz"])
-            network.node_attributes(node, ["rx", "ry", "rz"], scale_vector(reaction, -1.0))
-
-    for edge in form.edges():
-        length = form.edge_length(*edge)
-        network.edge_attribute(edge, "length", length)
-
-        force = form.edge_force(edge)
-        _q = force / length
-        network.edge_attribute(edge, "q", _q)
-
-    return network
-
-
-def transform_network_vectors(network, network_ref, attr_names):
-    """
-    """
-    for node in network.nodes():
-        load = network_ref.node_attributes(node, attr_names)
-        xyz = network_ref.node_coordinates(node)
-        load_line = Line(xyz, add_vectors(xyz, load))
-        load_line = load_line.transformed(T)
-        load = subtract_vectors(load_line.end, load_line.start)
-        network.node_attributes(node, attr_names, load)
-
-def calculate_edge_widths(networks, width_min, width_max):
-    """
-    """
-    forces_bag = []
-    forces = []
-    for network in networks:
-        _forces = [fabs(network.edge_force(edge)) for edge in network.edges()]
-        forces_bag.extend(_forces)
-        forces.append(_forces)
-
-    force_min = min(forces_bag)
-    force_max = max(forces_bag)
-
-    widths = []
-    widths_bag = []
-    for network, forces in zip(networks, forces):
-        _widths = remap_values(forces, width_min, width_max, force_min, force_max)
-        edgewidths = {edge: width for edge, width in zip(network.edges(), _widths)}
-        widths.append(edgewidths)
-        widths_bag.extend(_widths)
-
-    return widths
+    gkey_key = spoke_base.gkey_key()
+    for vkey in mesh.vertices():
+        gkey = geometric_key(mesh.vertex_coordinates(vkey))
+        key = gkey_key[gkey]
+        xyz = spoke.node_coordinates(key)
+        mesh.vertex_attributes(vkey, "xyz", xyz)
 
 # ------------------------------------------------------------------------------
-# Viewer
+# Delete auxiliary trails
 # ------------------------------------------------------------------------------
+
+if DELETE_AUX_TRAILS:
+    for _network, _network_base in zip(_networks, _networks_base):
+        if isinstance(_network_base, TopologyDiagram):
+            delete_topology_aux_trails(_network, _network_base)
 
 # ------------------------------------------------------------------------------
 # Viewer
@@ -265,10 +294,12 @@ if VIEW:
                       show_grid=False,
                       viewmode="lighted")
 
-    viewer.view.camera.distance = 28.0
-    viewer.view.camera.position = (-13.859, 20.460, 14.682)
-    viewer.view.camera.target = (1.008, 4.698, -3.034)
-    viewer.view.camera.rotation = (0.885, 0.000, -2.385)
+    viewer.view.camera.distance = 15.0
+    # viewer.view.camera.fov = 1.0
+    # viewer.view.camera.position = (-13.859, 20.460, 14.682)
+    # viewer.view.camera.target = (1.008, 4.698, -3.034)
+    # viewer.view.camera.rotation = (0.885, 0.000, -2.385)
+    # viewer.view.camera.rotation = (radians(45.0), radians(0.0), radians(45.0))
 
     width_min_view, width_max_view = edgewidth_view
     edgewidths = calculate_edge_widths(_networks, width_min_view, width_max_view)
@@ -278,15 +309,17 @@ if VIEW:
             _network = form_cem_to_fdnetwork(_network)
 
         viewer.add(_network,
-                   # show_points=False,
-                   # linewidth=6.0,
                    edgewidth=_edgewidth,
                    edgecolor="force", # Color.grey().darkened(),
                    show_reactions=False,
                    show_loads=False,
                    )
 
-    # viewer.add(mesh, opacity=0.4, show_points=False, show_edges=False)
+    if DISPLAY_MESH:
+        viewer.add(mesh,
+                   opacity=0.4,
+                   show_points=False,
+                   show_edges=False)
 
     viewer.show()
 
@@ -316,7 +349,7 @@ if PLOT:
             T = Rotation.from_axis_and_angle([1.0, 0.0, 0.0],
                                              radians(-90.0))
 
-            ns = nodesize * nodesize_factor
+            ns = nodesize * nodesize_factor_xy
 
         elif plot_transform == "y":
 
@@ -328,7 +361,7 @@ if PLOT:
 
             T = Transformation.from_matrix(multiply_matrices(R2.matrix,
                                                              R1.matrix))
-            ns = nodesize * nodesize_factor
+            ns = nodesize * nodesize_factor_xy
 
         elif plot_transform == "top":
             T = np.eye(4)
@@ -338,7 +371,12 @@ if PLOT:
             print("No transform!")
             T = np.eye(4)
 
-        for network in _networks:
+        # calculate
+        width_min_plot, width_max_plot = edgewidth_plot
+        edgewidths = calculate_edge_widths(_networks, width_min_plot, width_max_plot)
+
+        for i, network in enumerate(_networks):
+
             if isinstance(network, TopologyDiagram):
                 network = form_cem_to_fdnetwork(network)
 
@@ -352,18 +390,21 @@ if PLOT:
             if plot_transform != "3d":
                 rs = rs / 2.0
 
+            zorder = (i + 1) * 1000
+
             plotter.add(network_plot,
                         nodesize=ns,
                         show_nodes=True,
                         show_edges=True,
-                        show_loads=True,
-                        show_reactions=True,
-                        edgewidth=edgewidth,
+                        show_loads=False,
+                        show_reactions=False,
+                        edgewidth=edgewidth_plot,
                         edgecolor="force",
                         sizepolicy="absolute",
                         loadscale=1.0,
                         reactionscale=rs,
-                        reactioncolor=color_gray
+                        reactioncolor=color_gray,
+                        zorder=zorder
                         )
 
         if PLOT_MESH:
@@ -372,6 +413,7 @@ if PLOT:
                         show_edges=False,
                         show_vertices=False,
                         facecolor={fkey: color_mesh for fkey in mesh.faces()},
+                        zorder=10,
                         )
 
         if PLOT_DECK_LINES:
@@ -409,8 +451,10 @@ if PLOT:
             parts = []
             if DISPLAY_CABLENET:
                 parts.append("net")
-            if DISPLAY_DECK:
-                parts.append("deck")
+            if DISPLAY_ARCH:
+                parts.append("arch")
+            if DISPLAY_SPOKE:
+                parts.append("spoke")
 
             name = "".join(parts)
             filename = f"{name}_3d_{name_version}_{plot_transform}_plot.pdf"
