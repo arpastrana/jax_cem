@@ -66,7 +66,7 @@ DELETE_AUX_TRAILS = True
 VIEW = True
 
 PLOT = True
-PLOT_SAVE = False
+PLOT_SAVE = True
 
 PLOT_MESH = True
 PLOT_DECK_LINES = False
@@ -196,51 +196,6 @@ def calculate_edge_widths(networks, width_min, width_max):
         widths_bag.extend(_widths)
 
     return widths
-
-
-# ------------------------------------------------------------------------------
-# Indices pre calculation
-# ------------------------------------------------------------------------------
-
-# gkey_key = cablenet_base.gkey_key()
-
-# # add loads
-# nodes_cem = []  # support nodes in cem world where to get reaction force from
-# nodes_fdm = []  # nodes in fdm where to apply cem reaction as a load
-
-# for node in deck_base.nodes():
-#     if deck_base.is_node_origin(node):
-#         for neighbor in deck_base.neighbors(node):
-#             if not deck_base.is_node_support(neighbor):
-#                 continue
-
-#             key = gkey_key.get(geometric_key(deck_base.node_coordinates(node)))
-
-#             if key is None:
-#                 continue
-
-#             nodes_cem.append(neighbor)
-#             nodes_fdm.append(key)
-
-# # ce goals
-# nodes_ce_xyz_opt = []
-# for node in deck_base.nodes():
-#     if deck_base.is_node_origin(node):
-#         if any(deck_base.is_node_support(nbr) for nbr in deck_base.neighbors(node)):
-#             continue
-#     if deck_base.is_node_support(node):
-#         neighbor = deck_base.neighbors(node).pop()
-#         if deck_base.is_node_origin(neighbor):
-#             continue
-#     nodes_ce_xyz_opt.append(node)
-
-# nodes_ce_res_opt = []
-# for node in deck_base.nodes():
-#     if node in nodes_cem or node in nodes_ce_xyz_opt:
-#         continue
-#     if not deck_base.is_node_support(node):
-#         continue
-#     nodes_ce_res_opt.append(node)
 
 # ------------------------------------------------------------------------------
 # Clean up
