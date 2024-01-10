@@ -147,7 +147,7 @@
                 "length": -2.1401754834113067, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "e3f8a016-8c36-4d9c-909d-33e2d9ee93a9", 
+                    "guid": "477b853a-94a9-4d05-9ab4-1d48da37f529", 
                     "value": {
                         "normal": [
                             0.75574957407926524, 
@@ -173,7 +173,7 @@
                 "length": -2.1401755171491366, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "0a0ec30b-e4d4-4247-a9f4-8585a7676d26", 
+                    "guid": "0cc4e0c6-d8aa-40f1-a526-3e7a837ed8cc", 
                     "value": {
                         "normal": [
                             0.84125353275965042, 
@@ -195,7 +195,7 @@
                 "length": -2.1401754505758608, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "be948b66-3a73-4650-904c-190635931a9f", 
+                    "guid": "565446ff-f7c2-4604-965c-1eec250b8c4d", 
                     "value": {
                         "normal": [
                             -0.75574957336067972, 
@@ -234,7 +234,7 @@
                 "length": -2.140175506487775, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "8b89a566-1cb6-4b93-9986-033e734a1c59", 
+                    "guid": "aaedac0a-ed61-4d29-a8ec-7824d1106522", 
                     "value": {
                         "normal": [
                             0.90963199573939502, 
@@ -262,7 +262,7 @@
                 "length": -2.1401754094676471, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "8b7cd7f3-912f-4990-8b66-36e93d04a29a", 
+                    "guid": "4d58415f-c374-404d-ab61-6f8b027b39ce", 
                     "value": {
                         "normal": [
                             0.95949297315998772, 
@@ -288,7 +288,7 @@
                 "length": -2.1401756062746373, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "656b28c8-979d-4d07-a51b-fef5eae6e3fa", 
+                    "guid": "760e20e5-b113-4b6b-b1b2-4ed271b32056", 
                     "value": {
                         "normal": [
                             0.98982144176447706, 
@@ -324,7 +324,7 @@
                 "length": -2.1401755772086024, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "4a22bf92-d6d5-4c97-9287-c58e8722359a", 
+                    "guid": "916273c1-e8c7-4f8b-97fc-4b3d83818554", 
                     "value": {
                         "normal": [
                             -0.98982144102346103, 
@@ -350,7 +350,7 @@
                 "length": -2.1401755011294137, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "d31051e4-3531-42d5-9026-d2808860e0df", 
+                    "guid": "104f965f-639c-45cf-998d-9c2e7c991a97", 
                     "value": {
                         "normal": [
                             -0.95949297110369802, 
@@ -376,7 +376,7 @@
                 "length": -2.1401754160932986, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "58cc9c41-df28-4f68-87f8-188c545f13b4", 
+                    "guid": "7b0f0485-3d1f-46d0-b0eb-c2126d45c6d1", 
                     "value": {
                         "normal": [
                             -0.90963199268979977, 
@@ -398,7 +398,7 @@
                 "length": -2.1401754853461581, 
                 "plane": {
                     "dtype": "compas.geometry/Plane", 
-                    "guid": "6b6838d2-c29e-4dfb-a222-22556d8f51b9", 
+                    "guid": "911ac6ec-93eb-4b2d-9ebb-48d3e9bf3636", 
                     "value": {
                         "normal": [
                             -0.84125353099855138, 

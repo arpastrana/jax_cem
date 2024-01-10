@@ -45,7 +45,7 @@ VIEW = True
 OPTIMIZE = True
 
 PLOT_LOSS = True
-EXPORT_LOSS = False
+EXPORT_LOSS = True
 
 EXPORT_JSON = True
 
@@ -56,30 +56,34 @@ fmin_cable = 1e-3
 fmax_tie = -1e-3
 lmin, lmax = -50.0, 50.0
 
-zmin, zmax = 0.0, 0.5
+zmin, zmax = 0.0, 0.5  # 0.0, 0.5
 zmin_spoke, zmax_spoke = 0.0, 0.0  # 0.15, 0.15
 pz_spoke = -0.0
 
 # weights ce arch
-weight_xyz_ce = 1.0
-weight_residual = 5.0
+weight_xyz_ce = 1.0  # shape matching
+weight_residual = 5.0  # compatibility goal
 
 # weights fd cablenet
-weight_length = 1.0
-target_length_ratio_fd = 0.75
+weight_fairness = 1.0  # 0.25, fabrication goal
 
+weight_length = 0.0  # length of edges incident to cable ring, trick avoid last strip collapsing
+target_length_ratio_fd = 1.0
+
+weight_xyz_fd = 1.0  # architectural / covering goal
 use_xyz_fd_target_line = True
-weight_xyz_fd = 3.0
 
-weight_force = 1.0
-target_force_fd = 0.75
+weight_force = 1.0  # structural goal
+target_force_fd = 1.5
 
-weight_planar_fd = 0.0
+weight_force_equal = 1.0  # structural goal
 
-weight_reg_fd = 5e-2
+weight_planar_fd = 0.0  # fabrication goal
+weight_reg_fd = 0.0  # 5e-2  # regularization goal
 
 # weights ce spoke
-weight_xyz_ce_spoke = 0.1
+weight_xyz_ce_spoke = 0.5  # architectural goal
+
 
 # ------------------------------------------------------------------------------
 # Data
@@ -292,20 +296,32 @@ lines_fd_target = (xyz_fd_points_target, xyz_fd_points_target + jnp.array([0.0, 
 
 # lengths
 indices_fd_length_opt = []
+edges_length_opt = []
 fd_lengths_target = []
-# cablenet
-for edge in network.edges_where({"group": "net"}):
-    index = fd_structure.edge_index[edge]
-    indices_fd_length_opt.append(index)
-    length = network.edge_length(*edge)
-    fd_lengths_target.append(length)
 
-# cable ring
-for edge in network.edges_where({"group": "cable"}):
-    index = fd_structure.edge_index[edge]
-    indices_fd_length_opt.append(index)
-    length = network.edge_length(*edge)
-    fd_lengths_target.append(length)
+# # cablenet
+# for edge in network.edges_where({"group": "net"}):
+#     index = fd_structure.edge_index[edge]
+#     indices_fd_length_opt.append(index)
+#     length = network.edge_length(*edge)
+#     fd_lengths_target.append(length)
+
+# # cable ring
+# for edge in network.edges_where({"group": "cable"}):
+#     index = fd_structure.edge_index[edge]
+#     indices_fd_length_opt.append(index)
+#     length = network.edge_length(*edge)
+#     fd_lengths_target.append(length)
+
+# cables incident to ring
+for edge in network.edges_where({"group": "net"}):
+    u, v = edge
+    if u in nodes_cable or v in nodes_cable:
+        edges_length_opt.append(edge)
+        index = fd_structure.edge_index[edge]
+        indices_fd_length_opt.append(index)
+        length = network.edge_length(*edge)
+        fd_lengths_target.append(length)
 
 fd_lengths_target = jnp.asarray(fd_lengths_target)
 
@@ -315,9 +331,18 @@ for edge in network.edges_where({"group": "cable"}):
     index = fd_structure.edge_index[edge]
     indices_fd_force_opt.append(index)
 
+# cablenet forces equal
+indices_fd_force_equal_opt = []
+for edge in network.edges():
+    if network.edge_attribute(edge, "group") == "cable":
+        continue
+    elif edge in edges_length_opt:
+        continue
+    index = fd_structure.edge_index[edge]
+    indices_fd_force_equal_opt.append(index)
+
 # cable planarity
 edges_cable = [edge for edge in network.edges_where({"group": "cable"})]
-
 nodes_cable_planarity = []
 nodes_cable_planarity.extend(edges_cable[0])
 
@@ -374,6 +399,128 @@ for node in nodes_ce_spoke_xyz_opt:
     xyz_ce_spoke_target.append(topology_spoke.node_coordinates(node))
 
 xyz_ce_spoke_target = jnp.asarray(xyz_ce_spoke_target)
+
+# ==========================================================================
+# Extract vertices' ordered neighbors
+# ==========================================================================
+
+indices_fd_fairness_fd = []
+neighborhoods = []
+
+for node in network.nodes():
+
+    # skip leaf nodes
+    if network.is_leaf(node):
+        continue
+
+    # skip cable vertices
+    if node in nodes_cable:
+        continue
+
+    # skip high points
+    # if network.node_attribute(node, "group") == "highpoint":
+    #    continue
+
+    index = fd_structure.node_index[node]
+    indices_fd_fairness_fd.append(index)
+
+    nbrs_indices = []
+    for nkey in network.neighbors(node):
+
+        if nkey == node:
+            continue
+
+        index = fd_structure.node_index[nkey]
+        nbrs_indices.append(index)
+
+    neighborhoods.append(nbrs_indices)
+
+# ==========================================================================
+# Pad vertices' ordered neighbors
+# ==========================================================================
+
+neighborhoods_padded = []
+largest_neighborhood = max(len(hood) for hood in neighborhoods)
+
+for hood in neighborhoods:
+
+    hood_size = len(hood)
+    if hood_size == largest_neighborhood:
+        neighborhoods_padded.append(hood)
+        continue
+
+    hood_padded = hood + [-1] * (largest_neighborhood - hood_size)
+    neighborhoods_padded.append(hood_padded)
+
+assert all(len(hood) == largest_neighborhood for hood in neighborhoods_padded)
+
+hoods_padded = jnp.array(neighborhoods_padded)
+hoods_size = jnp.array([len(hood) for hood in neighborhoods])
+indices_fd_fairness_fd = jnp.array(indices_fd_fairness_fd, dtype=jnp.int32)
+
+
+# ==========================================================================
+# Fairness
+# ==========================================================================
+
+def hood_xyz(hood, xyz):
+    """
+    Get the polygon formed by vertex neighborhood from the xyz vertices array.
+    """
+    xyz_hood = xyz[hood, :]
+    xyz_repl = jnp.zeros_like(xyz_hood)
+
+    hood_2d = jnp.reshape(hood, (-1, 1))
+    hxyz = jnp.where(hood_2d >= 0, xyz_hood, xyz_repl)
+    assert hxyz.shape == xyz_hood.shape, f"{hxyz.shape}"
+
+    return hxyz
+
+
+def vertex_hood_fairness_ngon(vertex_xyz, hood_xyz, hood_size):
+    """
+    Compute the fairness of an n-gon vertex neighborhood.
+    """
+    hvector = jnp.sum(hood_xyz, axis=0) / hood_size
+    fvector = vertex_xyz - hvector
+    assert fvector.shape == vertex_xyz.shape
+
+    fairness = jnp.sum(jnp.square(fvector))
+
+    return fairness
+
+
+def vertex_hood_fairness(vertex, hood, hood_size, xyz):
+    """
+    Calculate the fairness of a vertex based on the position of its neighbors.
+    """
+    vxyz = xyz[vertex, :]
+    hxyz = hood_xyz(hood, xyz)
+
+    # return jnp.where(hood_size == 4,
+    #                  vertex_hood_fairness_quad(vxyz, hxyz),
+    #                  vertex_hood_fairness_ngon(vxyz, hxyz, hood_size))
+    return vertex_hood_fairness_ngon(vxyz, hxyz, hood_size)
+
+
+def vertices_hoods_fairness(vertices, hoods, hoods_size, xyz):
+    """
+    Calculate the fairness energy of the vertices of a mesh following Tang, et al. 2014.
+    """
+    fairness_fn = vmap(vertex_hood_fairness, in_axes=(0, 0, 0, None))
+    fairnesses = fairness_fn(vertices, hoods, hoods_size, xyz)
+
+    return jnp.mean(fairnesses)  # jnp.sum
+
+
+def goal_fairness(eqstate, indices, alpha):
+    """
+    Measure the planarity of the faces of a mesh structure.
+    """
+    return alpha * vertices_hoods_fairness(indices,
+                                           hoods_padded,
+                                           hoods_size,
+                                           eqstate.xyz)
 
 
 # ==========================================================================
@@ -482,10 +629,19 @@ if OPTIMIZE:
         goal_length_fd = jnp.mean(lengths_diff ** 2)
         error_length_fd = goal_length_fd * weight_length
 
+        # cablenet fairness
+        error_fairness_fd = goal_fairness(fd_eqstate,
+                                          indices_fd_fairness_fd,
+                                          weight_fairness)
+
         # cable forces
         forces_pred_fd = fd_eqstate.forces[indices_fd_force_opt, :].ravel()
         goal_force_fd = jnp.mean((forces_pred_fd - target_force_fd) ** 2)
         error_force_fd = goal_force_fd * weight_force
+
+        # cable forces equalize
+        forces_equal_pred_fd = fd_eqstate.forces[indices_fd_force_equal_opt, :].ravel()
+        error_force_equal_fd = weight_force_equal * (jnp.var(forces_equal_pred_fd) / jnp.mean(forces_equal_pred_fd))
 
         # cable planarity
         error_planarity_fd = goal_planarity(fd_eqstate,
@@ -496,7 +652,7 @@ if OPTIMIZE:
         goal_reg_fd = jnp.mean(jnp.square(diff_model.fdm.q))
         error_reg_fd = goal_reg_fd * weight_reg_fd
 
-        loss_fd = error_xyz_fd + error_length_fd + error_force_fd + error_planarity_fd + error_reg_fd
+        loss_fd = error_xyz_fd + error_length_fd + error_fairness_fd + error_force_fd + error_planarity_fd + error_reg_fd + error_force_equal_fd
 
         # cem spoke loss
         xyz_spoke_pred = ce_spoke_eqstate.xyz[indices_ce_spoke_xyz_opt, :]
@@ -509,13 +665,15 @@ if OPTIMIZE:
 
         if return_components:
             errors_dict = {
-                "ErrorXYZCE": error_xyz_ce,
-                "ErrorResCE": error_res_ce,
+                "ErrorXYZCEArch": error_xyz_ce,
+                "ErrorResCEArch": error_res_ce,
                 "ErrorXYZFD": error_xyz_fd,
                 "ErrorLengthFD": error_length_fd,
                 "ErrorForceFD": error_force_fd,
+                "ErrorForceEqualFD": error_force_equal_fd,
                 "ErrorPlanarityFD": error_planarity_fd,
                 "ErrorRegFD": error_reg_fd,
+                "ErrorFairnessFD": error_fairness_fd,
                 "ErrorXYZCESpoke": error_xyz_ce_spoke
             }
             return loss, errors_dict
@@ -640,11 +798,11 @@ if OPTIMIZE:
 
 if OPTIMIZE and EXPORT_JSON:
 
-    filepath_arch = os.path.abspath(os.path.join(HERE, f"data/stadium_arch_opt.json"))
+    filepath_arch = os.path.abspath(os.path.join(HERE, "data/stadium_arch_opt.json"))
     form_opt.to_json(filepath_arch)
-    filepath_net = os.path.abspath(os.path.join(HERE, f"data/stadium_cablenet_opt.json"))
+    filepath_net = os.path.abspath(os.path.join(HERE, "data/stadium_cablenet_opt.json"))
     network_opt.to_json(filepath_net)
-    filepath_spoke = os.path.abspath(os.path.join(HERE, f"data/stadium_spoke_opt.json"))
+    filepath_spoke = os.path.abspath(os.path.join(HERE, "data/stadium_spoke_opt.json"))
     form_spoke_opt.to_json(filepath_spoke)
     print(f"\nExported optimized arch JSON file to {filepath_arch}")
     print(f"\nExported optimized cablenet JSON file to {filepath_net}")
@@ -668,7 +826,7 @@ if OPTIMIZE and PLOT_LOSS:
     error_dicts = [errors_dict for _, errors_dict in losses_errors]
 
     if EXPORT_LOSS:
-        filepath = f"stadium_integrated_targetforce{int(target_force_fd)}_loss.txt"
+        filepath = "stadium_loss.txt"
         with open(filepath, "w") as file:
             for loss in losses:
                 file.write(f"{loss}\n")

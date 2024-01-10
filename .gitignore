@@ -120,3 +120,4 @@ docs/api/generated/
 conda.recipe/
 *.pdf
 *.gh
+*.ai

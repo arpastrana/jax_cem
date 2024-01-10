@@ -1,5 +1,7 @@
 import os
 
+import matplotlib.pyplot as plt
+
 from math import radians
 from math import fabs
 
@@ -22,7 +24,26 @@ from compas.utilities import remap_values
 
 from compas_cem.diagrams import TopologyDiagram
 
+import jaxopt
+
+from jax import jit
+from jax import vmap
+
+import equinox as eqx
+import jax.numpy as jnp
+import jax.tree_util as jtu
+
+from jax_cem.equilibrium import EquilibriumModel as CEModel
+from jax_cem.equilibrium import EquilibriumStructure as CEStructure
+from jax_cem.equilibrium import form_from_eqstate
+
 from jax_fdm.datastructures import FDNetwork
+
+from jax_fdm.geometry import closest_point_on_line
+
+from jax_fdm.equilibrium import EquilibriumModel as FDModel
+from jax_fdm.equilibrium import EquilibriumStructure as FDStructure
+from jax_fdm.equilibrium import network_updated
 
 from jax_fdm.visualization import Plotter as PlotterFD
 from jax_fdm.visualization import Viewer as ViewerFD
@@ -355,11 +376,13 @@ if PLOT:
                         show_nodes=True,
                         show_edges=True,
                         show_loads=False,
-                        show_reactions=True,
+                        show_reactions=False,
                         edgewidth=edgewidth_plot,
-                        loadscale=1.0,
                         edgecolor="force",
                         sizepolicy="absolute",
+                        loadscale=1.0,
+                        reactionscale=rs,
+                        reactioncolor=color_gray,
                         zorder=zorder
                         )
 
