@@ -6,11 +6,13 @@ from compas_cem.elements import Edge
 __all__ = ["form_from_eqstate", "form_update"]
 
 
-def form_from_eqstate(structure, eqstate):
+def form_from_eqstate(structure, eqstate, cls=None):
     """
     Generate a form diagram from an equilibrium state calculated with JAX CEM.
     """
-    form = FormDiagram()
+    if cls is None:
+        cls = FormDiagram
+    form = cls()
 
     # add nodes
     for node in structure.nodes:

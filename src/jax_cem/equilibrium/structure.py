@@ -351,6 +351,7 @@ def structure_from_topology(cls, topology):
     assert topology.number_of_trails() > 0, "No trails in the diagram!"
 
     # nodes
+    # TODO: Is sorting not introducing bugs here?
     nodes = np.asarray(sorted(list(topology.nodes())))
 
     # edges
