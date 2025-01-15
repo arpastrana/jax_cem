@@ -1,4 +1,4 @@
-compas==1.17.10
-compas_cem
-jax
+jax[cpu]
+compas<2.0
+scipy
 equinox
