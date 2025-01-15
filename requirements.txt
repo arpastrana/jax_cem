@@ -1,4 +1,4 @@
-compas
+compas==1.17.10
 compas_cem
-jax[cpu]
+jax
 equinox
