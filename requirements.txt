@@ -2,4 +2,4 @@ jax[cpu]
 scipy
 equinox
 compas<2.0
-compas_cem
+compas_cem>=0.8.0
