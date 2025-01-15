@@ -16,7 +16,7 @@ from __future__ import print_function
 
 import os
 
-from jax.config import config
+import jax
 
 
 __author__ = ["Rafael Pastrana"]
@@ -32,6 +32,6 @@ DATA = os.path.abspath(os.path.join(HOME, "data"))
 DOCS = os.path.abspath(os.path.join(HOME, "docs"))
 TEMP = os.path.abspath(os.path.join(HOME, "temp"))
 
-config.update("jax_enable_x64", True)
-
 __all__ = ["HOME", "DATA", "DOCS", "TEMP"]
+
+jax.config.update("jax_enable_x64", True)
