@@ -1,13 +1,6 @@
 import jax.numpy as jnp
 
 
-__all__ = ["vector_length", "vector_normalized"]
-
-# ------------------------------------------------------------------------------
-# Helper functions
-# ------------------------------------------------------------------------------
-
-
 def vector_length(v, keepdims=True):
     """
     Calculate the length of a vector over its last dimension.
