@@ -1,14 +1,15 @@
+import jax
 import jax.numpy as jnp
 
 
-def vector_length(v, keepdims=True):
+def vector_length(v: jax.Array, keepdims: bool = True) -> jax.Array:
     """
     Calculate the length of a vector over its last dimension.
     """
     return jnp.linalg.norm(v, axis=-1, keepdims=keepdims)
 
 
-def vector_normalized(u):
+def vector_normalized(u: jax.Array) -> jax.Array:
     """
     Scale a vector such that it has a unit length.
     """
