@@ -9,7 +9,15 @@ from compas.numerical import connectivity_matrix
 from compas.utilities import pairwise
 
 
-class EquilibriumStructure(eqx.Module):
+# ------------------------------------------------------------------------------
+# Structure
+# ------------------------------------------------------------------------------
+
+class Structure(eqx.Module):
+    pass
+
+
+class EquilibriumStructure(Structure):
     """
     The attributed, undirected graph describing a pin-jointed bar structure.
     """
