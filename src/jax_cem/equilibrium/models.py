@@ -8,20 +8,26 @@ from jax.lax import scan
 
 from equinox.internal import while_loop
 
-from jax_cem.equilibrium import EquilibriumState
 from jax_cem.geometry import vector_length
 from jax_cem.geometry import vector_normalized
 
-from jax_cem.equilibrium.states import EquilibriumSequenceState
-from jax_cem.equilibrium.states import ParameterState
-from jax_cem.equilibrium.structures import Structure
+from jax_cem.datastructures import Structure
+from jax_cem.parameters import ParameterState
+from jax_cem.equilibrium import EquilibriumState
+from jax_cem.equilibrium import EquilibriumSequenceState
 
 
 class EquilibriumModel:
     """
     An equilibrium model that implements the combinatorial equilibrium modeling (CEM) framework.
     """
-    def __init__(self, tmax: int = 10, eta: float = 1.0e-6, scale: float = 1.0e6, verbose: bool = False):
+    def __init__(
+            self,
+            tmax: int = 10,
+            eta: float = 1.0e-6,
+            scale: float = 1.0e6,
+            verbose: bool = False
+            ):
         self.tmax = tmax
         self.eta = eta
         self.scale = scale
@@ -37,9 +43,9 @@ class EquilibriumModel:
 
         Parameters
         ----------
-        parameters : `jax_cem.equilibrium.ParameterState`
+        parameters : `jax_cem.parameters.ParameterState`
             The parameters of the equilibrium model.
-        structure : `jax_cem.equilibrium.Structure`
+        structure : `jax_cem.datastructures.Structure`
             A structure.
 
         Returns
