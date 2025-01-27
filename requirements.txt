@@ -1,4 +1,5 @@
 jax
+jaxopt
 scipy
 equinox
 compas==1.17.10
