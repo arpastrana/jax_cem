@@ -1,4 +1,4 @@
-from time import time
+from time import perf_counter
 from math import pi
 from math import cos
 from math import sin
@@ -10,6 +10,7 @@ from compas.geometry import Translation
 from compas.utilities import pairwise
 
 from compas_cem.diagrams import TopologyDiagram
+from compas_cem.diagrams import FormDiagram
 
 from compas_cem.elements import Node
 from compas_cem.elements import DeviationEdge
@@ -27,7 +28,7 @@ import jax
 import jaxopt
 
 from jax import jit
-from jax import grad
+from jax import value_and_grad
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -35,9 +36,8 @@ import jax.tree_util as jtu
 import numpy as np
 
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.equilibrium import EquilibriumStructure
-from jax_cem.equilibrium import form_from_eqstate
-
+from jax_cem.datastructures import EquilibriumStructure
+from jax_cem.parameters import ParameterState
 
 # ------------------------------------------------------------------------------
 # Create a topology diagram
@@ -118,9 +118,11 @@ form_opt = opt.solve(topology, algorithm="LBFGS", grad=grad_method, verbose=True
 # ------------------------------------------------------------------------------
 
 structure = EquilibriumStructure.from_topology_diagram(topology0)
-model = EquilibriumModel.from_topology_diagram(topology0)
-eqstate = model(structure)
-form_jax = form_from_eqstate(structure, eqstate)
+parameters = ParameterState.from_topology_diagram(topology0)
+model = EquilibriumModel(tmax=1)
+eqstate = model(parameters, structure)
+
+form_jax = FormDiagram.from_equilibrium_state(eqstate, structure)
 
 # ------------------------------------------------------------------------------
 # JAX CEM - optimization
@@ -129,47 +131,53 @@ form_jax = form_from_eqstate(structure, eqstate)
 # find auxiliary edges
 aux_edges = [structure.edge_index[edge] for edge in topology.auxiliary_trail_edges()]
 
-
 # define loss function
 @jit
-def loss_fn(diff_model, static_model, structure, y):
-    model = eqx.combine(diff_model, static_model)
-    eqstate = model(structure, tmax=1)
+@value_and_grad
+def loss_fn(diff_params, static_params, structure, y):
+    params = eqx.combine(diff_params, static_params)
+    eqstate = model(params, structure)
     pred_y = eqstate.forces[aux_edges, :]
     return jnp.sum((y - pred_y) ** 2)
-
 
 # define targets
 y = 0.0
 
 # set tree filtering specification
-filter_spec = jtu.tree_map(lambda _: False, model)
+filter_spec = jtu.tree_map(lambda _: False, parameters)
 filter_spec = eqx.tree_at(lambda tree: tree.forces, filter_spec, replace=True)
 
 # split model into differentiable and static submodels
-diff_model, static_model = eqx.partition(model, filter_spec)
+diff_params, static_params = eqx.partition(parameters, filter_spec)
 
 # evaluate loss function at the start
-loss = loss_fn(diff_model, static_model, structure, y)
+time_start = perf_counter()
+loss, grad = loss_fn(diff_params, static_params, structure, y)
+time_end = perf_counter()
+print(f"Loss function evaluation time: {time_end - time_start:.2f} s")
 print(f"{loss=}")
 
 # solve optimization problem with scipy
 print("\n***Optimizing with scipy***")
 
 optimizer = jaxopt.ScipyMinimize
-opt = optimizer(fun=loss_fn, method="L-BFGS-B", jit=True, tol=1e-6, maxiter=100)
+opt = optimizer(fun=loss_fn, method="L-BFGS-B", jit=True, tol=1e-6, maxiter=100, value_and_grad=True)
 
-opt_result = opt.run(diff_model, static_model, structure, y)
-diff_model_star, opt_state_star = opt_result
+time_start = perf_counter()
+opt_result = opt.run(diff_params, static_params, structure, y)
+time_end = perf_counter()
+print(f"Optimization time: {time_end - time_start:.2f} s")
+
+diff_params_star, opt_state_star = opt_result
 
 # evaluate loss function at optimum point
-loss = loss_fn(diff_model_star, static_model, structure, y)
+loss, grad = loss_fn(diff_params_star, static_params, structure, y)
 print(f"{loss=}")
 
 # generate optimized compas cem form diagram
-model_star = eqx.combine(diff_model_star, static_model)
-eqstate_star = model_star(structure)
-form_jax_opt = form_from_eqstate(structure, eqstate_star)
+parameters_star = eqx.combine(diff_params_star, static_params)
+eqstate_star = model(parameters_star, structure)
+form_jax_opt = FormDiagram.from_equilibrium_state(eqstate_star, structure)
 
 # ------------------------------------------------------------------------------
 # Plot results
@@ -185,11 +193,12 @@ plotter.add(topology, nodesize=ns)
 # plot translated form diagram
 T = Translation.from_vector([shift, 0.0, 0.0])
 plotter.add(form.transformed(T), nodesize=ns)
-plotter.add(form_jax.transformed(T), nodesize=ns)
 
 # plot translated optimized form diagram
 T = Translation.from_vector([shift * 2.0, 0.0, 0.0])
-# plotter.add(form_opt.transformed(T), nodesize=ns)
+plotter.add(form_opt.transformed(T), nodesize=ns)
+
+T = Translation.from_vector([shift * 3.0, 0.0, 0.0])
 plotter.add(form_jax_opt.transformed(T), nodesize=ns, show_nodetext=True)
 
 # show scene

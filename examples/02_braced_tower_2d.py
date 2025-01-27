@@ -11,14 +11,14 @@ from compas_cem.elements import DeviationEdge
 from compas_cem.loads import NodeLoad
 from compas_cem.supports import NodeSupport
 
-from compas_cem.equilibrium import static_equilibrium
 from compas_cem.equilibrium import static_equilibrium_numpy
 
 from compas_cem.plotters import Plotter
 
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.equilibrium import EquilibriumStructure
-from jax_cem.equilibrium import form_from_eqstate
+from jax_cem.datastructures import EquilibriumStructure
+from jax_cem.parameters import ParameterState
+from jax_cem.datastructures import form_from_eqstate
 
 from jax.tree_util import tree_map
 
@@ -125,8 +125,10 @@ form = static_equilibrium_numpy(topology, eta=1e-9, tmax=tmax, verbose=False)
 # ------------------------------------------------------------------------------
 
 structure = EquilibriumStructure.from_topology_diagram(topology)
-model = EquilibriumModel.from_topology_diagram(topology)
-eqstate = model(structure, tmax=tmax, verbose=True)
+parameters = ParameterState.from_topology_diagram(topology)
+# model = EquilibriumModel.from_topology_diagram(topology)
+model = EquilibriumModel(tmax=tmax, verbose=True)
+eqstate = model(parameters, structure)
 # tree_map(lambda x: print(x), eqstate)
 form_jax = form_from_eqstate(structure, eqstate)
 

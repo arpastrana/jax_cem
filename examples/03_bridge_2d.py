@@ -6,6 +6,7 @@ from compas.geometry import Point
 from compas.geometry import Translation
 
 from compas_cem.diagrams import TopologyDiagram
+from compas_cem.diagrams import FormDiagram
 
 from compas_cem.loads import NodeLoad
 from compas_cem.supports import NodeSupport
@@ -21,21 +22,17 @@ from compas_cem.optimization import DeviationEdgeParameter
 
 from compas_cem.plotters import Plotter
 
-import jax
 import jaxopt
 
 from jax import jit
-from jax import grad
+from jax import value_and_grad
 
-import equinox as eqx
 import jax.numpy as jnp
-import jax.tree_util as jtu
 import numpy as np
 
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.equilibrium import EquilibriumStructure
-from jax_cem.equilibrium import form_from_eqstate
-
+from jax_cem.datastructures import EquilibriumStructure
+from jax_cem.parameters import ParameterState
 
 # ------------------------------------------------------------------------------
 # Data
@@ -131,74 +128,95 @@ form_opt = opt.solve(topology=topology, algorithm="LBFGS", iters=100, eps=1e-6, 
 # ------------------------------------------------------------------------------
 
 structure = EquilibriumStructure.from_topology_diagram(topology0)
-model = EquilibriumModel.from_topology_diagram(topology0)
-eqstate = model(structure)
-# print(model.lengths)
-# print(model.forces)
-form_jax = form_from_eqstate(structure, eqstate)
+parameters = ParameterState.from_topology_diagram(topology0)
+model = EquilibriumModel(tmax=100, verbose=True)
+eqstate = model(parameters, structure)
+
+form_jax = FormDiagram.from_equilibrium_state(eqstate, structure)
 
 # ------------------------------------------------------------------------------
 # JAX CEM - optimization
 # ------------------------------------------------------------------------------
 
 
+def combine_parameters(theta):
+    """
+    Combine a tuple of parameters into a parameter state.
+    """
+    lengths, forces = theta
+
+    return ParameterState(
+        lengths=lengths,
+        forces=forces,
+        xyz=parameters.xyz,
+        loads=parameters.loads,
+        planes=parameters.planes)
+
 # define loss function
 @jit
-def loss_fn(diff_model, static_model, structure, y):
-    model = eqx.combine(diff_model, static_model)
-    eqstate = model(structure, tmax=100)
-    pred_y = eqstate.xyz[nodes_opt, :]
-    return jnp.sum((y - pred_y) ** 2)
+@value_and_grad
+def loss_fn(theta):
+    """
+    Compute the loss function for the optimization problem.
+    """
+    parameters = combine_parameters(theta)
+    eqstate = model(parameters, structure)
+    xyz = eqstate.xyz[nodes_opt, :]
 
+    return jnp.sum(jnp.square(xyz - xyz_target))
 
 # define targets
-y = np.asarray(target_points)
+xyz_target = np.asarray(target_points)
 
-# set tree filtering specification
-filter_spec = jtu.tree_map(lambda _: False, model)
-filter_spec = eqx.tree_at(lambda tree: (tree.lengths, tree.forces), filter_spec, replace=(True, True))
-
-# split model into differentiable and static submodels
-diff_model, static_model = eqx.partition(model, filter_spec)
+# set initial optimization parameters
+theta_init = (parameters.lengths, parameters.forces)
 
 # create bounds
-bound_low = eqx.tree_at(lambda tree: (tree.lengths, tree.forces),
-                        diff_model,
-                        replace=(-3. * np.ones_like(model.forces), -3.0 * np.ones_like(model.lengths)))
-# print(bound_low.lengths)
-# print(bound_low.forces)
-bound_up = eqx.tree_at(lambda tree: (tree.lengths, tree.forces),
-                       diff_model,
-                       replace=(17. * np.ones_like(model.forces), 15. * np.ones_like(model.lengths)))
-# print(bound_up.lengths)
-# print(bound_up.forces)
-
+bound_low = (-10.0 * jnp.ones_like(parameters.forces), -10.0 * jnp.ones_like(parameters.lengths))
+bound_up = (15.0 * jnp.ones_like(parameters.forces), 15.0 * jnp.ones_like(parameters.lengths))
 bounds = (bound_low, bound_up)
 
 # evaluate loss function at the start
-loss = loss_fn(diff_model, static_model, structure, y)
+time_start = time()
+loss, grad = loss_fn(theta_init)
+time_end = time()
+print(f"Warm-up function evaluation time: {time_end - time_start:.2f} s")
 print(f"{loss=}")
 
-# solve optimization problem with scipy
+# Solve optimization problem with scipy
 print("\n***Optimizing with scipy***")
-# optimizer = jaxopt.ScipyMinimize
 optimizer = jaxopt.ScipyBoundedMinimize
+optimizer = jaxopt.ScipyMinimize
 
-opt = optimizer(fun=loss_fn, method="L-BFGS-B", jit=True, tol=1e-6, maxiter=100)
+opt = optimizer(
+    fun=loss_fn,
+    method="L-BFGS-B",
+    tol=1e-6,
+    maxiter=100,
+    value_and_grad=True
+    )
 
-# opt_result = opt.run(diff_model, static_model, structure, y)
-opt_result = opt.run(diff_model, bounds, static_model, structure, y)
-diff_model_star, opt_state_star = opt_result
+time_start = time()
+opt_result = opt.run(theta_init)  # , bounds)
+time_end = time()
+theta_star, opt_state_star = opt_result
 
-# evaluate loss function at optimum point
-loss = loss_fn(diff_model_star, static_model, structure, y)
+# Summary
+print(f"Optimization time: {time_end - time_start:.2f} s")
+print(f"Success? {opt_state_star.success}")
+print(f"Iterations: {opt_state_star.iter_num}")
+
+# Evaluate loss function at optimum point
+loss, grad = loss_fn(theta_star)
+grad_norm = jnp.linalg.norm(jnp.concatenate(grad))
 print(f"{loss=}")
-# print(opt_state_star)
+print(f"{grad_norm=}")
 
-# generate optimized compas cem form diagram
-model_star = eqx.combine(diff_model_star, static_model)
-eqstate_star = model_star(structure)
-form_jax_opt = form_from_eqstate(structure, eqstate_star)
+
+# Generate optimized compas cem form diagram
+parameters_star = combine_parameters(theta_star)
+eqstate_star = model(parameters_star, structure)
+form_jax_opt = FormDiagram.from_equilibrium_state(eqstate_star, structure)
 
 # ------------------------------------------------------------------------------
 # Plotter
@@ -246,7 +264,8 @@ for target_point in target_points:
     plotter.add(Point(x, y, z).transformed(T), size=5.0, facecolor=(1.0, 0.6, 0.0))
 
 # compas diagram
-plotter.add(form_opt.transformed(T), loadscale=loadscale, reactionscale=5.0, nodesize=nodesize, show_nodetext=True)
+# plotter.add(form_opt.transformed(T), loadscale=loadscale, reactionscale=5.0, nodesize=nodesize, show_nodetext=True)
+
 # jax diagram
 plotter.add(form_jax_opt.transformed(T), loadscale=loadscale, reactionscale=5.0, nodesize=nodesize, show_nodetext=True)
 

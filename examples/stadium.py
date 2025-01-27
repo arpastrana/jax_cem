@@ -2,16 +2,14 @@ import os
 
 from math import fabs
 
-from time import time
+from time import perf_counter
 
 from compas.geometry import Point
 from compas.geometry import Translation
 from compas.geometry import scale_vector
 
 from compas_cem.diagrams import TopologyDiagram
-
-from compas_cem.loads import NodeLoad
-from compas_cem.supports import NodeSupport
+from compas_cem.diagrams import FormDiagram
 
 from compas_cem.equilibrium import static_equilibrium
 
@@ -19,13 +17,10 @@ from compas_cem.optimization import Optimizer
 
 from compas_cem.optimization import TrailEdgeForceConstraint
 
-from compas_cem.optimization import TrailEdgeParameter
 from compas_cem.optimization import DeviationEdgeParameter
 
-from compas_cem.plotters import Plotter
 from compas_cem.viewers import Viewer
 
-import jax
 import jaxopt
 
 from jax import jit
@@ -34,15 +29,13 @@ from jax import grad
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
-import numpy as np
 
+from jax_cem.datastructures import EquilibriumStructure
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.equilibrium import EquilibriumStructure
-from jax_cem.equilibrium import form_from_eqstate
-
+from jax_cem.parameters import ParameterState
 
 VIEW = True
-OPTIMIZE = False
+OPTIMIZE = True
 OPTIMIZE_JAX = True
 
 # ------------------------------------------------------------------------------
@@ -108,9 +101,9 @@ if OPTIMIZE:
 # ------------------------------------------------------------------------------
 
     form_opt = opt.solve(topology=topology,
-                         algorithm="SLSQP",
+                         algorithm="LBFGS",
                          tmax=1,
-                         iters=300,
+                         iters=500,
                          eps=1e-6,
                          verbose=True)
 
@@ -119,11 +112,12 @@ if OPTIMIZE:
 # ------------------------------------------------------------------------------
 
 structure = EquilibriumStructure.from_topology_diagram(topology0)
-model = EquilibriumModel.from_topology_diagram(topology0)
-eqstate = model(structure, tmax=1)
-form_jax = form_from_eqstate(structure, eqstate)
+parameters = ParameterState.from_topology_diagram(topology0)
+model = EquilibriumModel(tmax=1)
+eqstate = model(parameters, structure)
 
-form_jax.to_json(os.path.join(HERE, "data/stadium_jax.json"))
+form_jax = FormDiagram.from_equilibrium_state(eqstate, structure)
+# form_jax.to_json(os.path.join(HERE, "data/stadium_jax.json"))
 
 # ------------------------------------------------------------------------------
 # JAX CEM - optimization
@@ -142,9 +136,9 @@ if OPTIMIZE_JAX:
 
     # define loss function
     @jit
-    def loss_fn(diff_model, static_model, structure, y):
-        model = eqx.combine(diff_model, static_model)
-        eqstate = model(structure, tmax=1)
+    def loss_fn(diff_params, static_params, structure, y):
+        parameters = eqx.combine(diff_params, static_params)
+        eqstate = model(parameters, structure)
         pred_y = eqstate.forces[edges_opt, :]
         return jnp.sum((pred_y - y) ** 2)
 
@@ -152,15 +146,15 @@ if OPTIMIZE_JAX:
     y = 0.0
 
     # set tree filtering specification
-    filter_spec = jtu.tree_map(lambda _: False, model)
+    filter_spec = jtu.tree_map(lambda _: False, parameters)
     filter_spec = eqx.tree_at(lambda tree: (tree.forces), filter_spec, replace=(True))
 
     # split model into differentiable and static submodels
-    diff_model, static_model = eqx.partition(model, filter_spec)
+    diff_params, static_params = eqx.partition(parameters, filter_spec)
 
-    # create bounds
+    # create lower bounds
     bounds_low_compas = []
-    for edge, force in zip(structure.edges, model.forces):
+    for edge, force in zip(structure.edges, parameters.forces):
         edge = tuple(edge)
 
         if not topology.is_deviation_edge(edge):
@@ -172,8 +166,9 @@ if OPTIMIZE_JAX:
         bounds_low_compas.append(bl)
     bounds_low_compas = jnp.asarray(bounds_low_compas)
 
+    # create upper bounds
     bounds_up_compas = []
-    for edge, force in zip(structure.edges, model.forces):
+    for edge, force in zip(structure.edges, parameters.forces):
         edge = tuple(edge)
 
         if not topology.is_deviation_edge(edge):
@@ -186,16 +181,16 @@ if OPTIMIZE_JAX:
     bounds_up_compas = jnp.asarray(bounds_up_compas)
 
     bound_low = eqx.tree_at(lambda tree: (tree.forces),
-                            diff_model,
+                            diff_params,
                             replace=(bounds_low_compas))
     bound_up = eqx.tree_at(lambda tree: (tree.forces),
-                           diff_model,
+                           diff_params,
                            replace=(bounds_up_compas))
 
     bounds = (bound_low, bound_up)
 
     # evaluate loss function at the start
-    loss = loss_fn(diff_model, static_model, structure, y)
+    loss = loss_fn(diff_params, static_params, structure, y)
     print(f"{loss=}")
 
     # # solve optimization problem with scipy
@@ -206,22 +201,26 @@ if OPTIMIZE_JAX:
     opt = optimizer(fun=loss_fn, method="L-BFGS-B", jit=True, tol=1e-6, maxiter=300)
 
     # opt_result = opt.run(diff_model, static_model, structure, y)
-    start = time()
-    opt_result = opt.run(diff_model, bounds, static_model, structure, y)
-    print(f"Opt time: {time() - start:.4f} sec")
-    diff_model_star, opt_state_star = opt_result
-    print(opt_state_star)
+    start = perf_counter()
+    opt_result = opt.run(diff_params, bounds, static_params, structure, y)
+    end = perf_counter()
+    diff_params_star, opt_state_star = opt_result
+
+    # Summary
+    print(f"Optimization time: {end - start:.2f} s")
+    print(f"Success? {opt_state_star.success}")
+    print(f"Iterations: {opt_state_star.iter_num}")
 
     # evaluate loss function at optimum point
-    loss = loss_fn(diff_model_star, static_model, structure, y)
+    loss = loss_fn(diff_params_star, static_params, structure, y)
     print(f"{loss=}")
 
     # generate optimized compas cem form diagram
-    model_star = eqx.combine(diff_model_star, static_model)
-    eqstate_star = model_star(structure)
-    form_jax_opt = form_from_eqstate(structure, eqstate_star)
+    parameters_star = eqx.combine(diff_params_star, static_params)
+    eqstate_star = model(parameters_star, structure)
+    form_jax_opt = FormDiagram.from_equilibrium_state(eqstate_star, structure)
 
-    form_jax_opt.to_json(os.path.join(HERE, "data/stadium_jax_opt.json"))
+    # form_jax_opt.to_json(os.path.join(HERE, "data/stadium_jax_opt.json"))
 
 # ------------------------------------------------------------------------------
 # Launch viewer
