@@ -3,10 +3,10 @@ import pytest
 import numpy as np
 
 from jax_cem.parameters import ParameterState
-from jax_cem.datastructures import form_from_eqstate
 from jax_cem.datastructures import EquilibriumStructure
-
 from jax_cem.equilibrium import EquilibriumModel
+
+from compas_cem.diagrams import FormDiagram
 
 
 # ==============================================================================
@@ -205,7 +205,7 @@ def test_force_equilibrium_jax_output(topology, output):
     model = EquilibriumModel()
 
     eqstate = model(params, structure)
-    form = form_from_eqstate(structure, eqstate)
+    form = FormDiagram.from_equilibrium_state(eqstate, structure)
 
     check_nodes_xyz(form, node_xyz_out)
     check_edges_forces(form, edge_force_out)
