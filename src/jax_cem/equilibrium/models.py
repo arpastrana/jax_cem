@@ -381,7 +381,12 @@ class EquilibriumModel:
         # May raise NaNs, use double where trick
         is_zero_res = jnp.allclose(residual, 0.0)
         residual = jnp.where(is_zero_res, jnp.ones_like(residual), residual)
-        length = jnp.where(is_zero_res, 0.0, cos_nop / (normal @ vector_normalized(residual)))
+
+        # Safeguard against residual pointing perpendularly to projection plane
+        cos_nres = normal @ vector_normalized(residual)
+        is_perp_res = jnp.allclose(cos_nres, 0.0)
+        cos_nres_safe = jnp.where(is_perp_res, 1.0, cos_nres)
+        length = jnp.where(is_zero_res, 0.0, cos_nop / cos_nres_safe)
 
         return length
 
