@@ -404,7 +404,7 @@ class EquilibriumModel:
         """
         vectors = edges_vector(xyz, structure.connectivity)
 
-        return vector_length(vectors)
+        return vmap(vector_length)(vectors)
 
     # ------------------------------------------------------------------------------
     # Edge forces
@@ -440,11 +440,12 @@ class EquilibriumModel:
         The force in the trail edges of a structure.
         """
         residuals = jnp.concatenate(residuals)
-        forces = trail_force(residuals)
+        forces = vmap(trail_force)(residuals)
 
         lengths = jnp.reshape(jnp.concatenate(lengths), (-1, 1))
 
         return jnp.copysign(forces, lengths)
+
 
 # ------------------------------------------------------------------------------
 # Helpers

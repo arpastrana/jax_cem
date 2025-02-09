@@ -6,7 +6,13 @@ def vector_length(v: jax.Array, keepdims: bool = True) -> jax.Array:
     """
     Calculate the length of a vector over its last dimension.
     """
-    return jnp.linalg.norm(v, axis=-1, keepdims=keepdims)
+    v = jnp.nan_to_num(v)
+    is_zero_vector = jnp.allclose(v, 0.0)
+    d = jnp.where(is_zero_vector, jnp.ones_like(v), v)  # replace d with ones if is_zero
+
+    length = jnp.where(is_zero_vector, 0.0, jnp.linalg.norm(d, axis=-1, keepdims=keepdims))
+
+    return length
 
 
 def vector_normalized(u: jax.Array) -> jax.Array:
