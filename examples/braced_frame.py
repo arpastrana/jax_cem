@@ -18,7 +18,7 @@ from jax_cem.parameters import ParameterState
 
 import jax.numpy as jnp
 
-import jaxopt
+from scipy.optimize import minimize
 
 from time import perf_counter
 
@@ -236,25 +236,22 @@ if OPTIMIZE:
 
     # Solve optimization problem with scipy
     print("\n***Optimizing with scipy***")
-    optimizer = jaxopt.ScipyMinimize
-
-    opt = optimizer(
+    time_start = perf_counter()
+    opt_result = minimize(
         fun=loss_fn,
+        x0=theta_init,
+        jac=True,
         method="L-BFGS-B",
         tol=TOL,
-        maxiter=MAXITER,
-        value_and_grad=True
-        )
-
-    time_start = perf_counter()
-    opt_result = opt.run(theta_init)  # , bounds)
+        options={"maxiter": MAXITER}
+    )
     time_end = perf_counter()
-    theta_star, opt_state_star = opt_result
+    theta_star = opt_result.x
 
     # Summary
     print(f"Optimization time: {time_end - time_start:.2f} s")
-    print(f"Success? {opt_state_star.success}")
-    print(f"Iterations: {opt_state_star.iter_num}")
+    print(f"Success? {opt_result.success}")
+    print(f"Iterations: {opt_result.nit}")
 
     # Evaluate loss function at optimum point
     loss, grad = loss_fn(theta_star)
