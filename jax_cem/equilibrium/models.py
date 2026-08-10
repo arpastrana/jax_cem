@@ -13,6 +13,10 @@ from jax_cem.geometry import vector_length
 from jax_cem.geometry import vector_normalized
 from jax_cem.parameters import ParameterState
 
+# ------------------------------------------------------------------------------
+#  The combinatorial equilibrium model
+# ------------------------------------------------------------------------------
+
 
 class EquilibriumModel:
     """
@@ -95,7 +99,7 @@ class EquilibriumModel:
 
         # Reaction forces
         reactions = jnp.zeros((structure.number_of_nodes(), 3))
-        reactions = reactions.at[structure.support_nodes, :].set(residuals[-1, :])
+        reactions = reactions.at[structure.supports, :].set(residuals[-1, :])
 
         # Edge forces
         forces = self.edges_force(
@@ -343,11 +347,13 @@ class EquilibriumModel:
         Calculate static equilibrium at one node of a structure.
         """
         load = params.loads[index, :]
-        incidence = structure.incidence[:, index] * structure.deviation_edges
+        # The incidence of a node is the negated connectivity: the connectivity
+        # signs an edge from its tail, the deviation force acts from the node.
+        incidence = -structure.connectivity[:, index] * structure.deviation_edges
 
         forces = jnp.ravel(params.forces) * incidence
         if not use_indirect:
-            forces = forces * structure.indirect_edges
+            forces = forces * structure.edges_deviation_direct
 
         deviation = deviation_vector(forces, vectors)
 

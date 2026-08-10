@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `jax_cem.datastructures.trails`, a native trail search that replaces the
+  reliance on `TopologyDiagram.build_trails`. `trails_from_edges` orders the nodes of
+  a structure into trails and `sequences_from_trails` lays those trails out into
+  sequences.
+- Added `align_trails`, which starts every trail at the sequence of the node it
+  deviates to and returns a new structure, mirroring `shift_trail` on a topology
+  diagram. One pass makes an origin node's deviation edges direct without making
+  every edge in the structure direct.
+- Added `EquilibriumStructure.__check_init__`, which rejects self-loops, a support
+  count that does not match the trail count, and out-of-range supports.
 - Added `connectivity_matrix` to `jax_cem.datastructures.structures`.
 - Added `docs/roadmap.md`, recording the design decisions of the refresh.
 - Added a `compas_xcheck` marker for tests that cross-check against COMPAS CEM.
@@ -38,6 +48,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   NumPy arrays.
 - Changed the test suite to `pytest-lazy-fixtures`, replacing the abandoned
   `pytest-lazy-fixture` and its `pytest<8` ceiling.
+- Changed `EquilibriumStructure` to take four arrays: `nodes`, `supports`,
+  `edges_trail`, and `edges_deviation`, down from eight arguments. Trail and deviation
+  edges are held apart rather than as one edge array and a mask, `edges` concatenates
+  them with trail edges first, and everything else is derived. `align_trails` applies
+  a shift with `equinox.tree_at`, so no shift reaches the constructor.
+- Changed `support_nodes` to `supports`, matching the Formax contract.
+- Changed `indirect_edges` to `edges_deviation_direct`, which is what the mask holds.
+- Removed `incidence` in favour of negating `connectivity` at its one call site, since
+  the two were the same array up to sign.
 
 ### Removed
 

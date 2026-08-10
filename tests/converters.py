@@ -10,6 +10,9 @@ from itertools import pairwise
 
 import jax.numpy as jnp
 import numpy as np
+from compas_cem.diagrams import FormDiagram
+from compas_cem.elements import Edge
+from compas_cem.elements import Node
 
 from jax_cem.datastructures import EquilibriumStructure
 from jax_cem.parameters import ParameterState
@@ -22,59 +25,50 @@ def structure_from_topology(topology):
     assert topology.number_of_trails() > 0, "No trails in the diagram!"
 
     nodes = np.asarray(sorted(topology.nodes()))
-    edges = np.asarray(list(topology.edges()))
 
-    trail_edges = np.asarray(
-        [float(topology.is_trail_edge(edge)) for edge in edges],
-    ).astype(float)
-    deviation_edges = np.logical_not(trail_edges).astype(float)
+    edges_trail = []
+    edges_deviation = []
+    for edge in topology.edges():
+        if topology.is_trail_edge(edge):
+            edges_trail.append(edge)
+        else:
+            edges_deviation.append(edge)
 
-    indirect_edges = deviation_edges.copy()
-    for i, edge in enumerate(edges):
-        if topology.is_indirect_deviation_edge(edge):
-            indirect_edges[i] = 0.0
-
-    # Negated to mark the padding of a shifted trail.
-    shape = (topology.number_of_sequences(), topology.number_of_trails())
-    sequences = np.ones(shape).astype(int) * -1
-
-    origin_nodes = []
-    support_nodes = []
-    for tidx, (onode, trail) in enumerate(topology.trails(True)):
-        origin_nodes.append(onode)
-        for sidx, node in enumerate(trail):
-            sequences[topology.node_sequence(node)][tidx] = node
-            if sidx == (len(trail) - 1):
-                support_nodes.append(node)
+    supports = sorted(trail[-1] for _, trail in topology.trails(True))
 
     return EquilibriumStructure(
         nodes=nodes,
-        edges=edges,
-        origin_nodes=np.asarray(origin_nodes).astype(int),
-        support_nodes=np.asarray(support_nodes).astype(int),
-        trail_edges=trail_edges,
-        deviation_edges=deviation_edges,
-        indirect_edges=indirect_edges,
-        sequences=sequences,
+        supports=np.asarray(supports).astype(int),
+        edges_trail=np.asarray(edges_trail).astype(int),
+        edges_deviation=np.asarray(edges_deviation).astype(int),
     )
 
 
-def parameters_from_topology(topology):
+def parameters_from_topology(topology, structure):
     """
     Create a parameter state from a COMPAS CEM topology diagram.
+
+    Notes
+    -----
+    Per-edge parameters follow the edge order of the structure, which puts trail
+    edges before deviation edges, rather than the order of the diagram.
     """
     nodes = sorted(topology.nodes())
-    edges = list(topology.edges())
 
     loads = jnp.asarray([topology.node_load(node) for node in nodes])
     xyz = jnp.asarray([topology.node_coordinates(node) for node in nodes])
 
-    forces = jnp.asarray([topology.edge_force(edge) for edge in edges])
-    forces = jnp.reshape(forces, (-1, 1))
+    forces = np.zeros((structure.number_of_edges(), 1))
+    edge_index = structure.edge_index
+    for edge in topology.edges():
+        u, v = edge
+        index = edge_index.get((u, v), edge_index.get((v, u)))
+        forces[index, :] = topology.edge_force(edge)
 
     lengths = np.zeros((topology.number_of_nodes(), 1))
     planes = np.zeros((topology.number_of_nodes(), 6))
 
+    edges = list(topology.edges())
     for trail in topology.trails():
         for u, v in pairwise(trail):
             edge = (u, v) if (u, v) in edges else (v, u)
@@ -93,5 +87,47 @@ def parameters_from_topology(topology):
         loads=loads,
         lengths=jnp.asarray(lengths),
         planes=jnp.asarray(planes),
-        forces=forces,
+        forces=jnp.asarray(forces),
     )
+
+
+def form_from_eqstate(eqstate, structure):
+    """
+    Build a COMPAS CEM form diagram from an equilibrium state.
+
+    Notes
+    -----
+    `FormDiagram.from_equilibrium_state` reads a `support_nodes` attribute, which
+    this structure calls `supports`, so the diagram is assembled here instead.
+    """
+    form = FormDiagram()
+
+    for node in structure.nodes:
+        form.add_node(Node(int(node)))
+
+    for node in structure.supports:
+        form.node_attribute(int(node), "type", "support")
+
+    for u, v in structure.edges:
+        form.add_edge(Edge(int(u), int(v), {}))
+
+    xyz = eqstate.xyz.tolist()
+    loads = eqstate.loads.tolist()
+    reactions = eqstate.reactions.tolist()
+    lengths = eqstate.lengths.tolist()
+    forces = eqstate.forces.tolist()
+
+    edge_index = structure.edge_index
+    for edge in structure.edges:
+        u, v = int(edge[0]), int(edge[1])
+        index = edge_index[(u, v)]
+        form.edge_attribute((u, v), name="force", value=forces[index].pop())
+        form.edge_attribute((u, v), name="lengths", value=lengths[index].pop())
+
+    for node in structure.nodes:
+        key = int(node)
+        form.node_attributes(key, "xyz", xyz[key])
+        form.node_attributes(key, ["rx", "ry", "rz"], reactions[key])
+        form.node_attributes(key, ["qx", "qy", "qz"], loads[key])
+
+    return form

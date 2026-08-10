@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from compas_cem.diagrams import FormDiagram
+from converters import form_from_eqstate
 from converters import parameters_from_topology
 from converters import structure_from_topology
 from pytest_lazy_fixtures import lf
@@ -209,11 +209,11 @@ def test_force_equilibrium_jax_output(topology, output):
     support_residual_out = output["residual"]
 
     structure = structure_from_topology(topology)
-    params = parameters_from_topology(topology)
+    params = parameters_from_topology(topology, structure)
     model = EquilibriumModel()
 
     eqstate = model(params, structure)
-    form = FormDiagram.from_equilibrium_state(eqstate, structure)
+    form = form_from_eqstate(eqstate, structure)
 
     check_nodes_xyz(form, node_xyz_out)
     check_edges_forces(form, edge_force_out)

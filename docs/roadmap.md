@@ -84,17 +84,22 @@ No COMPAS or COMPAS CEM code inside the `jax_cem` package. `compas_cem` stays as
 optional dependency used by the examples and by cross-check tests marked
 `compas_xcheck`, on the pattern `jax_fdm` uses for deletable scaffolding.
 
+A shift changes which deviation edges are indirect, not the equilibrium the model
+finds. Measured on the shifted fixture: the aligned and unaligned structures agree to
+1e-8 at `tmax=10` and differ by 6.0 in a single pass. Alignment buys iterations, not
+a different answer, which is why the baselines pass either way.
+
 `compas.numerical.connectivity_matrix` gains a local NumPy implementation. This is
 forced rather than chosen: COMPAS 2.x removed `compas.numerical` entirely, which is
-the only reason the package was pinned to `compas==1.17.10`. `compas_cem` 0.8.6
-already requires `compas>=2.15,<3.0` on Python 3.10–3.13, so the optional extra
-installs alongside modern dependencies.
+the only reason the package was pinned to `compas==1.17.10`. `compas_cem` supports
+COMPAS 2.x and numpy 2 on `main`, but its published 0.8.6 does not, so the dependency
+is pinned to git until the next release.
 
 The native trail search is the substantive piece of work in the refresh. `jax_cem`
-does not own trail sequencing today; it reads `trails()`, `node_sequence()`, and
+did not own trail sequencing; it read `trails()`, `node_sequence()`, and
 `is_indirect_deviation_edge()` off a COMPAS CEM topology diagram. Trail discovery,
-sequence assignment, shifted-trail padding, auxiliary trails, and direct versus
-indirect deviation edge classification all move into this repository.
+sequence assignment, shifted-trail padding, and the direct versus indirect deviation
+edge classification now live here. Auxiliary trails are deferred.
 
 
 ## Phases
@@ -165,9 +170,37 @@ The README is rewritten. It currently documents the Grasshopper componentizer an
 ### Phase 2 — Native structure and trail search
 
 The array structure above, the native trail search that populates it, and the
-change from mask multiplication to block slicing in the kernel. Deletes the
-`from_topology_diagram` constructors and the COMPAS imports in `structures.py` and
-`parameters.py`.
+change from mask multiplication to block slicing in the kernel.
+
+The trail search runs in `__init__`. It cannot run in `__check_init__`, which is
+validation only: an equinox module is frozen by then, and assigning a field there
+fails with `Field ... was not initialized`.
+
+Two parts of `TopologyDiagram.build_trails` are authoring decisions rather than
+derivations, so the search rejects a topology that needs them. `align_trails` applies
+one of them: it starts every trail at the sequence of the node it deviates to and
+returns a new structure, which is how a transform of an immutable module reads.
+
+Auxiliary trails are deferred. They append a node, a support, and a trail edge per
+node that deviation edges alone connect, so they change the parameter arrays as well
+as the topology, and a structure that needs them cannot be built in the first place.
+Until then, the caller supplies the augmented topology, and a structure whose nodes do
+not all reach a support is rejected with a message naming them.
+
+Whether a deviation edge is direct or indirect is settled by the sequences, so it is
+derived and never supplied, as it is in COMPAS CEM. The field survives this phase and
+disappears in the reshape, where ordering the edges as
+`[trail | deviation_direct | deviation_indirect]` turns the distinction into a slice.
+
+The graph operations are gathers and scatters, not matrix products. Edge vectors are
+`xyz[edges[:, 1]] - xyz[edges[:, 0]]`, and the deviation force at a node is a
+`segment_sum` over the deviation edges. Both were verified equal to the dense forms
+they replace, which removes `connectivity` and `incidence` entirely. This diverges
+from `jax_fdm`, which keeps a dense `connectivity` and a `BCOO` variant because the
+force density method assembles and solves a matrix. The CEM steps through sequences
+and accumulates at nodes, so the matrix buys nothing and costs `edges * nodes`.
+The conversion lands behind a benchmark, since the gain is asymptotic and the
+baselines are small.
 
 The six topology fixtures are ported to the array constructor in the same phase,
 which is what keeps the suite green across it and gives the constructor its first

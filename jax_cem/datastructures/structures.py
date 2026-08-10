@@ -1,12 +1,14 @@
-from itertools import pairwise
-
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
+from jaxtyping import Float
 from jaxtyping import Int
 from scipy.sparse import coo_matrix
 from scipy.sparse import csc_matrix
+
+from jax_cem.datastructures.trails import sequence_data
+from jax_cem.datastructures.trails import trails_from_edges
 
 # ------------------------------------------------------------------------------
 # Connectivity
@@ -63,91 +65,121 @@ class Structure(eqx.Module):
 class EquilibriumStructure(Structure):
     """
     The attributed, undirected graph describing a pin-jointed bar structure.
+
+    Notes
+    -----
+    Trail and deviation edges are held apart rather than as one edge array and a
+    mask, since an edge is one or the other and never both. `edges` concatenates
+    them, trail edges first, and that order is the one every derived index and
+    every per-edge parameter follows.
+
+    The trail search runs in the constructor, so a structure is either laid out
+    into sequences or it does not exist.
     """
 
-    nodes: jax.Array  # nodes
-    edges: jax.Array  # pairs of nodes
-    origin_nodes: jax.Array  # nodes
-    support_nodes: jax.Array  # nodes
-    trail_edges: jax.Array  # indices in edges, or mask?
-    deviation_edges: jax.Array  # indices in edges or mask?
-    indirect_edges: jax.Array  # indices in edges or mask?
-    sequences: jax.Array  # nodes verbatim
-    node_index: dict[int, int]
-    edge_index: dict[tuple[int, int], int]
-    connectivity: jax.Array
-    incidence: jax.Array
-    sequences_edges: np.ndarray
-    sequences_edges_indices: np.ndarray
+    nodes: Int[np.ndarray, "nodes"]
+    supports: Int[np.ndarray, "nodes_fixed"]
+    edges_trail: Int[np.ndarray, "edges_trail 2"]
+    edges_deviation: Int[np.ndarray, "edges_deviation 2"]
 
-    def __init__(
-        self,
-        nodes,
-        edges,
-        origin_nodes,
-        support_nodes,
-        trail_edges,
-        deviation_edges,
-        indirect_edges,
-        sequences,
-    ):
-        self.nodes = nodes
-        self.edges = edges
-        self.origin_nodes = origin_nodes
-        self.support_nodes = support_nodes
-        self.trail_edges = trail_edges  # a boolean mask
-        self.deviation_edges = deviation_edges  # a boolean mask
-        self.indirect_edges = indirect_edges
-        self.sequences = sequences
+    sequences: Int[np.ndarray, "sequences trails"]
+    origin_nodes: Int[np.ndarray, "trails"]
+    sequences_edges: Int[np.ndarray, "sequences_edges trails"]
+    sequences_edges_indices: Int[np.ndarray, "sequences_edges_flat"]
+    edges_deviation_direct: Float[Array, "edges"]
+    connectivity: Float[Array, "edges nodes"]
 
-        self.node_index = {node: index for index, node in enumerate(self.nodes)}
-        self.edge_index = {tuple(edge): index for index, edge in enumerate(self.edges)}
-        self.connectivity = jnp.asarray(
-            connectivity_matrix(self.edges, len(self.nodes)).toarray(),
+    def __init__(self, nodes, supports, edges_trail, edges_deviation):
+        self.nodes = np.asarray(nodes)
+        self.supports = np.asarray(supports)
+        self.edges_trail = np.asarray(edges_trail).reshape(-1, 2)
+        self.edges_deviation = np.asarray(edges_deviation).reshape(-1, 2)
+
+        edges = np.asarray(self.edges)
+        trails = trails_from_edges(self.nodes, self.supports, self.edges_trail)
+        data = sequence_data(
+            trails,
+            edges,
+            len(self.nodes),
+            len(self.edges_trail),
         )
-        self.incidence = self._incidence()
-        self.sequences_edges = self._sequences_edges()
-        self.sequences_edges_indices = self._sequences_edges_indices()
 
-    def _incidence(self):
-        incidence = np.zeros_like(self.connectivity)
+        self.sequences = data.sequences
+        self.origin_nodes = data.origin_nodes
+        self.sequences_edges = data.sequences_edges
+        self.sequences_edges_indices = data.sequences_edges_indices
+        self.edges_deviation_direct = data.edges_deviation_direct
 
-        for node in self.nodes:
-            edge_indices = np.nonzero(self.connectivity[:, node])
-            connected_edges = self.edges[edge_indices]
-            for i, edge in zip(np.reshape(edge_indices, (-1, 1)), connected_edges):
-                val = 1.0
-                if edge[0] != node:
-                    val = -1.0
-                incidence[i, node] = val
+        self.connectivity = jnp.asarray(
+            connectivity_matrix(edges, len(self.nodes)).toarray(),
+        )
 
-        return jnp.asarray(incidence)
+    def __check_init__(self):
+        """
+        Reject a structure that the equilibrium computation cannot step through.
+        """
+        edges = np.asarray(self.edges)
+        loops = np.flatnonzero(edges[:, 0] == edges[:, 1])
+        if loops.size > 0:
+            raise ValueError(f"Edges {loops.tolist()} are self-loops")
 
-    def _sequences_edges_indices(self):
-        counts = []
-        count = 0
-        for sequence in self.sequences_edges:
-            for idx in sequence:
-                if idx >= 0:
-                    counts.append(count)
-                count += 1
+        if self.supports.size != self.number_of_trails():
+            raise ValueError(
+                f"Got {self.supports.size} supports for {self.number_of_trails()} "
+                f"trails; every trail ends at exactly one support",
+            )
 
-        return np.asarray(counts).astype(int)
+        if np.any((self.supports < 0) | (self.supports >= len(self.nodes))):
+            raise ValueError("Supports must index existing nodes")
 
-    def _sequences_edges(self):
-        sequences = []
-        for sequences_pair in pairwise(self.sequences):
-            sequence = []
-            for edge in zip(*sequences_pair):
-                edge = tuple(edge)
-                index = self.edge_index.get(
-                    edge,
-                    self.edge_index.get((edge[1], edge[0]), -1),
-                )
-                sequence.append(index)
-            sequences.append(sequence)
+    # --------------------------------------------------------------------------
+    # Derived views
+    # --------------------------------------------------------------------------
 
-        return np.asarray(sequences).astype(int)
+    @property
+    def edges(self) -> Int[np.ndarray, "edges 2"]:
+        """
+        The node key pair of each edge, trail edges first.
+        """
+        return np.concatenate((self.edges_trail, self.edges_deviation))
+
+    @property
+    def node_index(self) -> dict[int, int]:
+        """
+        A dictionary between node keys and their enumeration indices.
+        """
+        return {int(node): index for index, node in enumerate(self.nodes)}
+
+    @property
+    def edge_index(self) -> dict[tuple[int, int], int]:
+        """
+        A dictionary between edge keys and their enumeration indices.
+        """
+        return {(int(u), int(v)): index for index, (u, v) in enumerate(self.edges)}
+
+    @property
+    def trail_edges(self) -> Float[Array, "edges"]:
+        """
+        Mask the trail edges, which the concatenation puts first.
+        """
+        mask = np.zeros(self.number_of_edges())
+        mask[: len(self.edges_trail)] = 1.0
+
+        return jnp.asarray(mask)
+
+    @property
+    def deviation_edges(self) -> Float[Array, "edges"]:
+        """
+        Mask the deviation edges, which the concatenation puts last.
+        """
+        mask = np.zeros(self.number_of_edges())
+        mask[len(self.edges_trail) :] = 1.0
+
+        return jnp.asarray(mask)
+
+    # --------------------------------------------------------------------------
+    # Counts
+    # --------------------------------------------------------------------------
 
     def number_of_nodes(self):
         """
@@ -159,21 +191,19 @@ class EquilibriumStructure(Structure):
         """
         The number of edges in the graph.
         """
-        return len(self.edges)
+        return len(self.edges_trail) + len(self.edges_deviation)
 
     def number_of_trail_edges(self):
         """
         The number of trail edges in the graph.
         """
-        # return self.num_trail_edges
-        return int(np.sum(self.trail_edges))
+        return len(self.edges_trail)
 
     def number_of_deviation_edges(self):
         """
         The number of deviation edges in the graph.
         """
-        # return self.num_deviation_edges
-        return int(np.sum(self.deviation_edges))
+        return len(self.edges_deviation)
 
     def number_of_trails(self):
         """
