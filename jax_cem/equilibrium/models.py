@@ -2,42 +2,41 @@ from typing import Tuple
 
 import jax
 import jax.numpy as jnp
-
+from equinox.internal import while_loop
 from jax import vmap
 from jax.lax import scan
 
-from equinox.internal import while_loop
-
+from jax_cem.datastructures import EquilibriumStructure
+from jax_cem.equilibrium import EquilibriumSequenceState
+from jax_cem.equilibrium import EquilibriumState
 from jax_cem.geometry import vector_length
 from jax_cem.geometry import vector_normalized
-
-from jax_cem.datastructures import Structure
 from jax_cem.parameters import ParameterState
-from jax_cem.equilibrium import EquilibriumState
-from jax_cem.equilibrium import EquilibriumSequenceState
 
 
 class EquilibriumModel:
     """
-    An equilibrium model that implements the combinatorial equilibrium modeling (CEM) framework.
+    An equilibrium model that implements the combinatorial equilibrium modeling
+    (CEM) framework.
     """
+
     def __init__(
-            self,
-            tmax: int = 10,
-            eta: float = 1.0e-6,
-            scale: float = 1.0e6,
-            verbose: bool = False
-            ):
+        self,
+        tmax: int = 10,
+        eta: float = 1.0e-6,
+        scale: float = 1.0e6,
+        verbose: bool = False,
+    ):
         self.tmax = tmax
         self.eta = eta
         self.scale = scale
         self.verbose = verbose
 
     def __call__(
-            self,
-            params: ParameterState,
-            structure: Structure
-            ) -> EquilibriumState:
+        self,
+        params: ParameterState,
+        structure: EquilibriumStructure,
+    ) -> EquilibriumState:
         """
         Computes an equilibrium state on a structure.
 
@@ -45,7 +44,7 @@ class EquilibriumModel:
         ----------
         parameters : `jax_cem.parameters.ParameterState`
             The parameters of the equilibrium model.
-        structure : `jax_cem.datastructures.Structure`
+        structure : `jax_cem.datastructures.EquilibriumStructure`
             A structure.
 
         Returns
@@ -69,8 +68,8 @@ class EquilibriumModel:
                 xyz,
                 self.tmax,
                 self.eta,
-                self.scale
-                )
+                self.scale,
+            )
 
         return self.equilibrium_state(params, structure, data)
 
@@ -79,11 +78,11 @@ class EquilibriumModel:
     # ------------------------------------------------------------------------------
 
     def equilibrium_state(
-            self,
-            params: ParameterState,
-            structure: Structure,
-            data: Tuple[jax.Array, jax.Array, jax.Array]
-            ) -> EquilibriumState:
+        self,
+        params: ParameterState,
+        structure: EquilibriumStructure,
+        data: Tuple[jax.Array, jax.Array, jax.Array],
+    ) -> EquilibriumState:
         """
         Assemble an equilibrium state.
         """
@@ -99,7 +98,12 @@ class EquilibriumModel:
         reactions = reactions.at[structure.support_nodes, :].set(residuals[-1, :])
 
         # Edge forces
-        forces = self.edges_force(structure, residuals[:-1, :], lengths[:-1, :], params.forces)
+        forces = self.edges_force(
+            structure,
+            residuals[:-1, :],
+            lengths[:-1, :],
+            params.forces,
+        )
 
         # Edge lengths
         lengths = self.edges_length(structure, xyz)
@@ -110,8 +114,8 @@ class EquilibriumModel:
             reactions=reactions,
             lengths=lengths,
             loads=params.loads,
-            forces=forces
-            )
+            forces=forces,
+        )
 
         return state
 
@@ -120,28 +124,29 @@ class EquilibriumModel:
     # ------------------------------------------------------------------------------
 
     def equilibrium(
-            self,
-            params: ParameterState,
-            structure: Structure,
-            xyz: jax.Array
-            ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+        self,
+        params: ParameterState,
+        structure: EquilibriumStructure,
+        xyz: jax.Array,
+    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
         """
         Calculate static equilibrium on a structure.
         """
         return self.sequences_equilibrium(params, structure, xyz, use_indirect=False)
 
     def equilibrium_iterative(
-            self,
-            params: ParameterState,
-            structure: Structure,
-            xyz: jax.Array,
-            tmax: int,
-            eta: float,
-            scale: float
-            ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+        self,
+        params: ParameterState,
+        structure: EquilibriumStructure,
+        xyz: jax.Array,
+        tmax: int,
+        eta: float,
+        scale: float,
+    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
         """
         Calculate static equilibrium on a structure iteratively.
         """
+
         def distance(xyz, xyz_last):
             return jnp.sum(jnp.linalg.norm(xyz_last[:-1] - xyz[:-1], axis=1))
 
@@ -154,31 +159,48 @@ class EquilibriumModel:
 
         def body_fn(val):
             xyz_last, _ = val
-            xyz, _, _ = self.sequences_equilibrium(params, structure, xyz_last, use_indirect=True)
+            xyz, _, _ = self.sequences_equilibrium(
+                params,
+                structure,
+                xyz_last,
+                use_indirect=True,
+            )
             return xyz, xyz_last
 
         # Initialize iteration
         init_val = xyz * scale, xyz
 
         # Iterate
-        xyz_last, _ = while_loop(cond_fn, body_fn, init_val, max_steps=tmax, kind="checkpointed")
+        xyz_last, _ = while_loop(
+            cond_fn,
+            body_fn,
+            init_val,
+            max_steps=tmax,
+            kind="checkpointed",
+        )
 
-        return self.sequences_equilibrium(params, structure, xyz_last, use_indirect=True)
+        return self.sequences_equilibrium(
+            params,
+            structure,
+            xyz_last,
+            use_indirect=True,
+        )
 
     # ------------------------------------------------------------------------------
     # Sequence equilibrium
     # ------------------------------------------------------------------------------
 
     def sequences_equilibrium(
-            self,
-            params: ParameterState,
-            structure: Structure,
-            xyz: jax.Array,
-            use_indirect: bool
-            ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+        self,
+        params: ParameterState,
+        structure: EquilibriumStructure,
+        xyz: jax.Array,
+        use_indirect: bool,
+    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
         """
         Calculates equilibrium on all the sequences of a structure.
         """
+
         def calculate_sequence_state_start():
             """
             Creates an initial scan state.
@@ -202,8 +224,8 @@ class EquilibriumModel:
                 _xyz,
                 xyz_seq,
                 residuals_seq,
-                use_indirect
-                )
+                use_indirect,
+            )
 
             state_out = (_xyz, state_seq.xyz, state_seq.residuals)
             carry_out = (state_seq.residuals, state_seq.lengths)
@@ -213,27 +235,27 @@ class EquilibriumModel:
         # Create initial scan state
         state_start = calculate_sequence_state_start()
 
-        # Compute static equilibrium in the structure by scanning a function over all sequences
+        # Compute static equilibrium by scanning a function over all sequences
         state_end, (residuals_seqs, lengths_seqs) = scan(
             calculate_sequence_state,
             state_start,
-            structure.sequences
-            )
+            structure.sequences,
+        )
 
         xyz, *_ = state_end
 
         return xyz, residuals_seqs, lengths_seqs
 
     def sequence_equilibrium(
-            self,
-            params: ParameterState,
-            structure: Structure,
-            sequence: jax.Array,
-            xyz: jax.Array,
-            xyz_seq: jax.Array,
-            residuals_seq: jax.Array,
-            use_indirect: bool
-            ) -> EquilibriumSequenceState:
+        self,
+        params: ParameterState,
+        structure: EquilibriumStructure,
+        sequence: jax.Array,
+        xyz: jax.Array,
+        xyz_seq: jax.Array,
+        residuals_seq: jax.Array,
+        use_indirect: bool,
+    ) -> EquilibriumSequenceState:
         """
         Compute static equilibrium on all the nodes of a sequence.
         """
@@ -241,13 +263,25 @@ class EquilibriumModel:
         is_sequence_padded = jnp.reshape(sequence, (-1, 1)) < 0
 
         # Node residuals
-        residuals_new = self.nodes_equilibrium(params, structure, sequence, xyz[:-1], residuals_seq, use_indirect)
+        residuals_new = self.nodes_equilibrium(
+            params,
+            structure,
+            sequence,
+            xyz[:-1],
+            residuals_seq,
+            use_indirect,
+        )
         residuals_seq = jnp.where(is_sequence_padded, residuals_seq, residuals_new)
 
         # Trail edge lengths
-        # NOTE: Probably inefficient to pre-compute both versions of length
-        # Perhaps moving length functions to arguments of jnp.where would skip that evaluation?
-        lengths_plane = self.nodes_length_plane(params, sequence, xyz_seq, residuals_seq)
+        # NOTE: Probably inefficient to pre-compute both versions of length.
+        # Passing the length functions to jnp.where may skip one evaluation.
+        lengths_plane = self.nodes_length_plane(
+            params,
+            sequence,
+            xyz_seq,
+            residuals_seq,
+        )
         lengths_signed = params.lengths[sequence].ravel()
         lengths_seq = jnp.where(lengths_signed != 0.0, lengths_signed, lengths_plane)
 
@@ -259,8 +293,8 @@ class EquilibriumModel:
         state = EquilibriumSequenceState(
             xyz=xyz_seq,
             residuals=residuals_seq,
-            lengths=lengths_seq
-            )
+            lengths=lengths_seq,
+        )
 
         return state
 
@@ -269,32 +303,42 @@ class EquilibriumModel:
     # ------------------------------------------------------------------------------
 
     def nodes_equilibrium(
-            self,
-            params: ParameterState,
-            structure: Structure,
-            sequence: jax.Array,
-            xyz: jax.Array,
-            residuals: jax.Array,
-            use_indirect: bool
-            ) -> jax.Array:
+        self,
+        params: ParameterState,
+        structure: EquilibriumStructure,
+        sequence: jax.Array,
+        xyz: jax.Array,
+        residuals: jax.Array,
+        use_indirect: bool,
+    ) -> jax.Array:
         """
         Calculate static equilibrium at one node of a structure. Vectorized.
         """
-        node_equilibrium_vmap = vmap(self.node_equilibrium, in_axes=(None, None, 0, 0, None, None))
+        node_equilibrium_vmap = vmap(
+            self.node_equilibrium,
+            in_axes=(None, None, 0, 0, None, None),
+        )
         vectors = edges_vector(xyz, structure.connectivity)
         vectors = vmap(vector_normalized)(vectors)
 
-        return node_equilibrium_vmap(params, structure, sequence, residuals, vectors, use_indirect)
+        return node_equilibrium_vmap(
+            params,
+            structure,
+            sequence,
+            residuals,
+            vectors,
+            use_indirect,
+        )
 
     def node_equilibrium(
-            self,
-            params: ParameterState,
-            structure: Structure,
-            index: int,
-            residual: jax.Array,
-            vectors: jax.Array,
-            use_indirect: bool
-            ) -> jax.Array:
+        self,
+        params: ParameterState,
+        structure: EquilibriumStructure,
+        index: jax.Array,
+        residual: jax.Array,
+        vectors: jax.Array,
+        use_indirect: bool,
+    ) -> jax.Array:
         """
         Calculate static equilibrium at one node of a structure.
         """
@@ -314,22 +358,22 @@ class EquilibriumModel:
     # ------------------------------------------------------------------------------
 
     def nodes_position(
-            self,
-            xyz_seq: jax.Array,
-            residuals: jax.Array,
-            lengths: jax.Array
-            ) -> jax.Array:
+        self,
+        xyz_seq: jax.Array,
+        residuals: jax.Array,
+        lengths: jax.Array,
+    ) -> jax.Array:
         """
         Calculate the position of the next sequence of nodes of a structure.
         """
         return vmap(self.node_position)(xyz_seq, residuals, lengths)
 
     def node_position(
-            self,
-            xyz: jax.Array,
-            residual: jax.Array,
-            length: jax.Array
-            ) -> jax.Array:
+        self,
+        xyz: jax.Array,
+        residual: jax.Array,
+        length: jax.Array,
+    ) -> jax.Array:
         """
         Calculate the position of the next node on a trail of a structure.
         """
@@ -340,12 +384,12 @@ class EquilibriumModel:
     # ------------------------------------------------------------------------------
 
     def nodes_length_plane(
-            self,
-            params: ParameterState,
-            sequence: jax.Array,
-            xyz_seq: jax.Array,
-            residuals: jax.Array
-            ) -> jax.Array:
+        self,
+        params: ParameterState,
+        sequence: jax.Array,
+        xyz_seq: jax.Array,
+        residuals: jax.Array,
+    ) -> jax.Array:
         """
         Calculate the outgoing edge lengths in a sequence. Vectorized.
         """
@@ -354,12 +398,12 @@ class EquilibriumModel:
         return node_length_plane_vmap(params, sequence, xyz_seq, residuals)
 
     def node_length_plane(
-            self,
-            params: ParameterState,
-            index: int,
-            xyz: jax.Array,
-            residual: jax.Array
-            ) -> jax.Array:
+        self,
+        params: ParameterState,
+        index: jax.Array,
+        xyz: jax.Array,
+        residual: jax.Array,
+    ) -> jax.Array:
         """
         Compute the outgoing length from a node.
 
@@ -395,10 +439,10 @@ class EquilibriumModel:
     # ------------------------------------------------------------------------------
 
     def edges_length(
-            self,
-            structure: Structure,
-            xyz: jax.Array
-            ) -> jax.Array:
+        self,
+        structure: EquilibriumStructure,
+        xyz: jax.Array,
+    ) -> jax.Array:
         """
         The length of the edges of a structure.
         """
@@ -411,12 +455,12 @@ class EquilibriumModel:
     # ------------------------------------------------------------------------------
 
     def edges_force(
-            self,
-            structure: Structure,
-            residuals: jax.Array,
-            lengths: jax.Array,
-            forces: jax.Array
-            ) -> jax.Array:
+        self,
+        structure: EquilibriumStructure,
+        residuals: jax.Array,
+        lengths: jax.Array,
+        forces: jax.Array,
+    ) -> jax.Array:
         """
         The forces in the edges of a structure.
         """
@@ -432,10 +476,10 @@ class EquilibriumModel:
         return forces_new
 
     def trails_force(
-            self,
-            residuals: jax.Array,
-            lengths: jax.Array
-            ) -> jax.Array:
+        self,
+        residuals: jax.Array,
+        lengths: jax.Array,
+    ) -> jax.Array:
         """
         The force in the trail edges of a structure.
         """
@@ -451,10 +495,11 @@ class EquilibriumModel:
 # Helpers
 # ------------------------------------------------------------------------------
 
+
 def deviation_vector(
-        forces: jax.Array,
-        vectors: jax.Array
-        ) -> jax.Array:
+    forces: jax.Array,
+    vectors: jax.Array,
+) -> jax.Array:
     """
     Calculate the resultant deviation vector incoming to a node.
     """
@@ -462,9 +507,9 @@ def deviation_vector(
 
 
 def trail_length(
-        trail_lengths: jax.Array,
-        incidence: jax.Array
-        ) -> jax.Array:
+    trail_lengths: jax.Array,
+    incidence: jax.Array,
+) -> jax.Array:
     """
     Get the length of the next trail edge outgoing from a node.
     """
@@ -479,10 +524,10 @@ def trail_force(residual: jax.Array) -> jax.Array:
 
 
 def residual_vector(
-        residual: jax.Array,
-        deviation: jax.Array,
-        load: jax.Array
-        ) -> jax.Array:
+    residual: jax.Array,
+    deviation: jax.Array,
+    load: jax.Array,
+) -> jax.Array:
     """
     The updated residual vector at a node.
     """
@@ -490,10 +535,10 @@ def residual_vector(
 
 
 def position_vector(
-        position: jax.Array,
-        residual: jax.Array,
-        trail_length: jax.Array
-        ) -> jax.Array:
+    position: jax.Array,
+    residual: jax.Array,
+    trail_length: jax.Array,
+) -> jax.Array:
     """
     The position of the next node on a trail.
     """
@@ -501,9 +546,9 @@ def position_vector(
 
 
 def edges_vector(
-        xyz: jax.Array,
-        connectivity: jax.Array
-        ) -> jax.Array:
+    xyz: jax.Array,
+    connectivity: jax.Array,
+) -> jax.Array:
     """
     The edge vectors of the graph.
     """

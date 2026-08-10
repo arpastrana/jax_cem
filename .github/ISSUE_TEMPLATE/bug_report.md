@@ -12,7 +12,7 @@ A clear and concise description of what the bug is.
 
 Steps to reproduce the behavior:
 
-1. Context [e.g. ST3, Rhino, Blender, ...]
+1. Context [e.g. Python version, operating system, JAX backend]
 2. Sample script
 3. Sample data
 4. See error

@@ -1,17 +1,60 @@
-import jax
+from itertools import pairwise
 
 import equinox as eqx
-
-import numpy as np
+import jax
 import jax.numpy as jnp
+import numpy as np
+from jaxtyping import Int
+from scipy.sparse import coo_matrix
+from scipy.sparse import csc_matrix
 
-from compas.numerical import connectivity_matrix
-from compas.utilities import pairwise
+# ------------------------------------------------------------------------------
+# Connectivity
+# ------------------------------------------------------------------------------
+
+
+def connectivity_matrix(
+    edges: Int[np.ndarray, "edges 2"],
+    num_nodes: int | None = None,
+) -> csc_matrix:
+    """
+    Build the signed edge-node incidence matrix from indexed edges.
+
+    Parameters
+    ----------
+    edges :
+        The node index pair of each edge.
+    num_nodes :
+        The total number of nodes, fixing the column count. When omitted, it is
+        inferred as the largest node index plus one, which undercounts columns
+        if the highest-indexed node touches no edge.
+
+    Returns
+    -------
+    connectivity :
+        The incidence matrix in sparse format, one row per edge, with ``-1``
+        in the start node's column and ``+1`` in the end node's column.
+    """
+    # Iterating a JAX array element-wise costs one device sync per element;
+    # convert to NumPy once and slice columns vectorized.
+    edges_np = np.asarray(edges)
+    m = len(edges_np)
+    data = np.concatenate((-np.ones(m), np.ones(m)))
+    rows = np.concatenate((np.arange(m), np.arange(m)))
+    cols = np.concatenate((edges_np[:, 0], edges_np[:, 1]))
+
+    n = num_nodes if num_nodes is not None else int(np.max(edges_np)) + 1
+    shape = (m, n)
+
+    # coo_matrix.tocsc() yields a csc_matrix at runtime; scipy's bundled stubs
+    # widen the return to csc_array
+    return coo_matrix((data, (rows, cols)), shape=shape).tocsc()  # pyright: ignore[reportReturnType]
 
 
 # ------------------------------------------------------------------------------
 # Structure
 # ------------------------------------------------------------------------------
+
 
 class Structure(eqx.Module):
     pass
@@ -21,6 +64,7 @@ class EquilibriumStructure(Structure):
     """
     The attributed, undirected graph describing a pin-jointed bar structure.
     """
+
     nodes: jax.Array  # nodes
     edges: jax.Array  # pairs of nodes
     origin_nodes: jax.Array  # nodes
@@ -29,15 +73,23 @@ class EquilibriumStructure(Structure):
     deviation_edges: jax.Array  # indices in edges or mask?
     indirect_edges: jax.Array  # indices in edges or mask?
     sequences: jax.Array  # nodes verbatim
-    node_index: jax.Array
-    edge_index: jax.Array
+    node_index: dict[int, int]
+    edge_index: dict[tuple[int, int], int]
     connectivity: jax.Array
     incidence: jax.Array
-    sequences_edges: jax.Array
-    sequences_edges_indices: jax.Array
+    sequences_edges: np.ndarray
+    sequences_edges_indices: np.ndarray
 
     def __init__(
-        self, nodes, edges, origin_nodes, support_nodes, trail_edges, deviation_edges, indirect_edges, sequences
+        self,
+        nodes,
+        edges,
+        origin_nodes,
+        support_nodes,
+        trail_edges,
+        deviation_edges,
+        indirect_edges,
+        sequences,
     ):
         self.nodes = nodes
         self.edges = edges
@@ -50,7 +102,9 @@ class EquilibriumStructure(Structure):
 
         self.node_index = {node: index for index, node in enumerate(self.nodes)}
         self.edge_index = {tuple(edge): index for index, edge in enumerate(self.edges)}
-        self.connectivity = jnp.asarray(connectivity_matrix(self.edges))
+        self.connectivity = jnp.asarray(
+            connectivity_matrix(self.edges, len(self.nodes)).toarray(),
+        )
         self.incidence = self._incidence()
         self.sequences_edges = self._sequences_edges()
         self.sequences_edges_indices = self._sequences_edges_indices()
@@ -86,7 +140,10 @@ class EquilibriumStructure(Structure):
             sequence = []
             for edge in zip(*sequences_pair):
                 edge = tuple(edge)
-                index = self.edge_index.get(edge, self.edge_index.get((edge[1], edge[0]), -1))
+                index = self.edge_index.get(
+                    edge,
+                    self.edge_index.get((edge[1], edge[0]), -1),
+                )
                 sequence.append(index)
             sequences.append(sequence)
 
@@ -129,93 +186,3 @@ class EquilibriumStructure(Structure):
         The number of sequences in the graph.
         """
         return self.sequences.shape[0]
-
-    @classmethod
-    def from_topology_diagram(cls, topology):
-        """
-        Create a equilibrium graph from a COMPAS CEM topology diagram.
-
-        Parameters
-        ----------
-        topology : `compas_cem.diagrams.TopologyDiagram`
-            A valid topology diagram.
-        """
-        return structure_from_topology(cls, topology)
-
-
-# ------------------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------------------
-
-
-def structure_from_topology(cls, topology):
-    """
-    Create an equilibrium model from a COMPAS CEM topology diagram.
-
-    Parameters
-    ----------
-    topology : `compas_cem.diagrams.TopologyDiagram`
-        A valid topology diagram.
-
-    Returns
-    -------
-    structure : `jax_cem.equilibrium.EquilibriumStructure`
-        A structure.
-    """
-    # there must be at least one trail
-    assert topology.number_of_trails() > 0, "No trails in the diagram!"
-
-    # nodes
-    # TODO: Is sorting not introducing bugs here?
-    nodes = np.asarray(sorted(list(topology.nodes())))
-
-    # edges
-    edges = np.asarray(list(topology.edges()))
-
-    # trail edges
-    trail_edges = []
-    for edge in edges:
-        val = 0.0
-        if topology.is_trail_edge(edge):
-            val = 1.0
-        trail_edges.append(val)
-    trail_edges = np.asarray(trail_edges).astype(float)
-
-    # deviation edges
-    deviation_edges = np.logical_not(trail_edges).astype(float)
-
-    # indirect deviation edges
-    indirect_edges = deviation_edges.copy()  # np.zeros_like(deviation_edges)
-    for i, edge in enumerate(edges):
-        if topology.is_indirect_deviation_edge(edge):
-            indirect_edges[i] = 0.0
-
-    # sequences
-    sequences = np.ones((topology.number_of_sequences(), topology.number_of_trails())).astype(int)
-
-    # negate to deal with shifted trail
-    sequences *= -1
-
-    origin_nodes = []
-    support_nodes = []
-    for tidx, (onode, trail) in enumerate(topology.trails(True)):
-        origin_nodes.append(onode)
-        for sidx, node in enumerate(trail):
-            seq = topology.node_sequence(node)
-            sequences[seq][tidx] = node
-            if sidx == (len(trail) - 1):
-                support_nodes.append(node)
-
-    origin_nodes = np.asarray(origin_nodes).astype(int)
-    support_nodes = np.asarray(support_nodes).astype(int)
-
-    return cls(
-        nodes=nodes,
-        edges=edges,
-        origin_nodes=origin_nodes,
-        support_nodes=support_nodes,
-        trail_edges=trail_edges,
-        deviation_edges=deviation_edges,
-        indirect_edges=indirect_edges,
-        sequences=sequences,
-    )

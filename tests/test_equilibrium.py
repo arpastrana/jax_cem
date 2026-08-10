@@ -1,13 +1,11 @@
-import pytest
-
 import numpy as np
-
-from jax_cem.parameters import ParameterState
-from jax_cem.datastructures import EquilibriumStructure
-from jax_cem.equilibrium import EquilibriumModel
-
+import pytest
 from compas_cem.diagrams import FormDiagram
+from converters import parameters_from_topology
+from converters import structure_from_topology
+from pytest_lazy_fixtures import lf
 
+from jax_cem.equilibrium import EquilibriumModel
 
 # ==============================================================================
 # Tests - Static equilibrium
@@ -28,7 +26,12 @@ def cs_out():
 def tc_out():
     """Static equilibrium results from tension chain."""
     output = {}
-    output["xyz"] = {0: [0.0, 0.0, 0.0], 1: [1.5, 0.0, 0.0], 2: [2.5, 0.0, 0.0], 3: [4.0, 0.0, 0.0]}
+    output["xyz"] = {
+        0: [0.0, 0.0, 0.0],
+        1: [1.5, 0.0, 0.0],
+        2: [2.5, 0.0, 0.0],
+        3: [4.0, 0.0, 0.0],
+    }
 
     output["force"] = {(0, 1): 1.0, (1, 2): 1.0, (2, 3): 1.0}
 
@@ -42,7 +45,12 @@ def tc_out():
 def cc_out():
     """Static equilibrium results from compression chain."""
     output = {}
-    output["xyz"] = {0: [0.0, 0.0, 0.0], 1: [1.5, 0.0, 0.0], 2: [2.5, 0.0, 0.0], 3: [4.0, 0.0, 0.0]}
+    output["xyz"] = {
+        0: [0.0, 0.0, 0.0],
+        1: [1.5, 0.0, 0.0],
+        2: [2.5, 0.0, 0.0],
+        3: [4.0, 0.0, 0.0],
+    }
 
     output["force"] = {(0, 1): -1.0, (1, 2): -1.0, (2, 3): -1.0}
 
@@ -183,12 +191,12 @@ def tss_out():
 @pytest.mark.parametrize(
     "topology, output",
     [
-        (pytest.lazy_fixture("compression_strut"), cs_out()),
-        (pytest.lazy_fixture("threebar_funicular"), tf_out()),
-        (pytest.lazy_fixture("braced_tower_2d"), bt2_out()),
-        (pytest.lazy_fixture("tension_chain"), tc_out()),
-        (pytest.lazy_fixture("compression_chain"), cc_out()),
-        (pytest.lazy_fixture("topology_shifted_sequences"), tss_out()),
+        (lf("compression_strut"), cs_out()),
+        (lf("threebar_funicular"), tf_out()),
+        (lf("braced_tower_2d"), bt2_out()),
+        (lf("tension_chain"), tc_out()),
+        (lf("compression_chain"), cc_out()),
+        (lf("topology_shifted_sequences"), tss_out()),
     ],
 )
 def test_force_equilibrium_jax_output(topology, output):
@@ -200,8 +208,8 @@ def test_force_equilibrium_jax_output(topology, output):
     edge_length_out = output["length"]
     support_residual_out = output["residual"]
 
-    structure = EquilibriumStructure.from_topology_diagram(topology)
-    params = ParameterState.from_topology_diagram(topology)
+    structure = structure_from_topology(topology)
+    params = parameters_from_topology(topology)
     model = EquilibriumModel()
 
     eqstate = model(params, structure)
@@ -235,7 +243,7 @@ def check_edges_forces(form, edge_force_out):
 def check_edges_lengths(form, edge_length_out):
     for edge in form.edges(data=False):
         length = edge_length_out.get(edge)
-        test_length = form.edge_length(*edge)  # TODO: overwrite inheritance
+        test_length = form.edge_length(edge)
         assert np.allclose(length, test_length)
 
 

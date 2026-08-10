@@ -1,59 +1,16 @@
-import pytest
-import compas
-import jax_cem
-import compas_cem
-import math
-import numpy
-
 from math import sqrt
 
+import pytest
 from compas_cem.diagrams import TopologyDiagram
+from compas_cem.elements import DeviationEdge
 from compas_cem.elements import Node
 from compas_cem.elements import TrailEdge
-from compas_cem.elements import DeviationEdge
 from compas_cem.loads import NodeLoad
 from compas_cem.supports import NodeSupport
-
-
-def pytest_ignore_collect(path):
-    if "rhino" in str(path):
-        return True
-
-    if "blender" in str(path):
-        return True
-
-    if "ghpython" in str(path):
-        return True
-
 
 # ==============================================================================
 # Fixtures
 # ==============================================================================
-
-
-@pytest.fixture(autouse=True)
-def add_compas(doctest_namespace):
-    doctest_namespace["compas"] = compas
-
-
-@pytest.fixture(autouse=True)
-def add_jax_cem(doctest_namespace):
-    doctest_namespace["jax_cem"] = jax_cem
-
-
-@pytest.fixture(autouse=True)
-def add_compas_cem(doctest_namespace):
-    doctest_namespace["compas_cem"] = compas_cem
-
-
-@pytest.fixture(autouse=True)
-def add_math(doctest_namespace):
-    doctest_namespace["math"] = math
-
-
-@pytest.fixture(autouse=True)
-def add_np(doctest_namespace):
-    doctest_namespace["np"] = numpy
 
 
 @pytest.fixture
@@ -92,9 +49,13 @@ def tension_chain():
     topology.add_node(Node(2, [2.0, 0.0, 0.0]))
     topology.add_node(Node(3, [3.0, 0.0, 0.0]))
     # add edges
-    topology.add_edge(TrailEdge(0, 1, length=1, plane=([1.5, 0.0, 0.0], [1.0, 0.0, 0.0])))
+    topology.add_edge(
+        TrailEdge(0, 1, length=1, plane=([1.5, 0.0, 0.0], [1.0, 0.0, 0.0])),
+    )
     topology.add_edge(TrailEdge(1, 2, length=1))  # unit length in tension
-    topology.add_edge(TrailEdge(2, 3, length=1, plane=([4.0, 0.0, 0.0], [1.0, 0.0, 0.0])))
+    topology.add_edge(
+        TrailEdge(2, 3, length=1, plane=([4.0, 0.0, 0.0], [1.0, 0.0, 0.0])),
+    )
     # add support
     topology.add_support(NodeSupport(3))
     # add load
@@ -119,9 +80,13 @@ def compression_chain():
     topology.add_node(Node(2, [2.0, 0.0, 0.0]))
     topology.add_node(Node(3, [3.0, 0.0, 0.0]))
     # add edges
-    topology.add_edge(TrailEdge(0, 1, length=-1, plane=([1.5, 0.0, 0.0], [1.0, 0.0, 0.0])))
+    topology.add_edge(
+        TrailEdge(0, 1, length=-1, plane=([1.5, 0.0, 0.0], [1.0, 0.0, 0.0])),
+    )
     topology.add_edge(TrailEdge(1, 2, length=-1))  # unit length in tension
-    topology.add_edge(TrailEdge(2, 3, length=-1, plane=([4.0, 0.0, 0.0], [1.0, 0.0, 0.0])))
+    topology.add_edge(
+        TrailEdge(2, 3, length=-1, plane=([4.0, 0.0, 0.0], [1.0, 0.0, 0.0])),
+    )
     # add support
     topology.add_support(NodeSupport(3))
     # add load
@@ -359,7 +324,7 @@ def topology_shifted_sequences():
 
     # shift auxiliary trails (only one iteration is needed)
     for node in topology.origin_nodes():
-        edges = topology.connected_edges(node)
+        edges = topology.node_connected_edges(node)
         for edge in edges:
             if not topology.is_indirect_deviation_edge(edge):
                 continue

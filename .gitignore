@@ -121,3 +121,6 @@ conda.recipe/
 *.pdf
 *.gh
 *.ai
+
+.ruff_cache
+uv.lock

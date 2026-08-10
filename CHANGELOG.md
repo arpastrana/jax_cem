@@ -9,7 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `connectivity_matrix` to `jax_cem.datastructures.structures`.
+- Added `docs/roadmap.md`, recording the design decisions of the refresh.
+- Added a `compas_xcheck` marker for tests that cross-check against COMPAS CEM.
+- Added `tests/converters.py`, holding the COMPAS CEM topology diagram converters
+  that the test fixtures need. Scaffolding, deleted once the native array
+  constructor replaces it.
+
 ### Changed
+
+- Changed the license from MIT to Apache-2.0.
+- Changed the packaging to `pyproject.toml` with `uv`, replacing `setup.py`,
+  `setup.cfg`, `MANIFEST.in`, `.bumpversion.cfg`, and the `requirements` files.
+- Changed the package layout from `src/jax_cem` to a top-level `jax_cem`.
+- Changed the linter and formatter to `ruff`, replacing `flake8`, `black`,
+  `isort`, `autopep8`, and `pydocstyle`.
+- Changed continuous integration to `test.yml` and `publish.yml`, replacing the
+  `compas-actions` workflows, and added a `pyright` job to `pr-checks.yml`.
+- Changed the supported Python range to 3.11 through 3.13.
+- Changed `connectivity_matrix` to take the node count, fixing an `IndexError`
+  raised when the highest-indexed node touches no edge.
+- Changed the annotations that misreported their runtime type, which makes `pyright`
+  clean: `EquilibriumModel` took the empty `Structure` base class where it reads
+  `EquilibriumStructure` attributes, the `vmap`-ed `index` parameters of
+  `node_equilibrium` and `node_length_plane` were declared `int` where they receive a
+  traced scalar, and `node_index`, `edge_index`, `sequences_edges` and
+  `sequences_edges_indices` were declared `jax.Array` where they hold dicts and
+  NumPy arrays.
+- Changed the test suite to `pytest-lazy-fixtures`, replacing the abandoned
+  `pytest-lazy-fixture` and its `pytest<8` ceiling.
 
 ### Removed
 
+- Removed `EquilibriumStructure.from_topology_diagram` and
+  `ParameterState.from_topology_diagram`. They made `compas_cem` a hard import of
+  `jax_cem.parameters`; the conversion now lives in `tests/converters.py` until the
+  native array constructor replaces it.
+- Removed the dependency on `compas`. The library no longer imports
+  `compas.numerical` or `compas.utilities`, which lifts the `compas==1.17.10` pin.
+- Removed the Sphinx documentation sources, `tasks.py`, and the `temp`, `scripts`,
+  and `data` placeholder directories.
+- Removed the `HOME`, `DATA`, `DOCS`, and `TEMP` globals from `jax_cem`.
