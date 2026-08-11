@@ -9,8 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `Sequences.edges`, the trail edge outgoing from the node at each slot of the
+  layout and `-1` where a slot has none. It is the slot-to-edge map `build_sequences`
+  already builds in order to invert it into `edges_slot`, kept rather than discarded,
+  so the two directions of one bijection cannot fall out of step with a trail that
+  shifts. It is row-aligned with `Sequences.nodes`, which is what lets the scan step
+  over the node of a slot and the edge that leaves it together.
+- Added a test that the position of every origin node in the equilibrium state is the
+  parameter given for it, over the three native structures, which pins that the origin
+  positions are read by trail column and not by node key. Verified to bite by reversing
+  the columns, which fails fourteen tests.
+- Added two layout tests to `tests/test_trails.py`: the edge of a slot joins the node
+  of that slot to the next one on its trail, and the slot of an edge reads that edge
+  back. The first runs on the braced tower, which holds every trail edge against its
+  trail direction, and the second on the shifted fixture, whose layout both pads and
+  shifts. Verified to bite by padding the map at the top rather than the bottom, which
+  fails sixteen tests.
 - Added `EquilibriumState.vectors`, the vector of every edge, which the state used
   to leave the caller to recompute from the node positions.
+- Added `Sequences`, which `EquilibriumStructure` holds as its one derived field, in
+  place of the four it used to spread across. `SequenceData` was already this grouping
+  and was splatted apart on arrival, so the constructor and `align_trails` had to
+  replace four fields in step to keep them consistent; a shift changes all of it at
+  once, and one field cannot fall out of step with itself.
+- Added `is_edge_deviation_direct` as a function, taking a structure, where it was a
+  property. It scatters and gathers, which attribute syntax hid.
+- Added `EquilibriumTrailsState`, which names the triple that `equilibrium`,
+  `equilibrium_iterative`, and `sequences_equilibrium` return and `equilibrium_state`
+  consumes. The triple crossed four boundaries unnamed, which cost a repeated inline
+  annotation at every one of them and left the callers unpacking it positionally. A
+  sequence state holds one stage across all the trails, so no trail is whole in it;
+  stacking every stage is what completes them, which is what this holds.
 - Added `EquilibriumStructure.is_edge_deviation_direct`, a property that masks the
   deviation edges whose two nodes share a sequence. It replaces a stored field:
   which edges those are follows from the sequences, so deriving it means it cannot
@@ -69,6 +98,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Changed `ParameterState.lengths` and `ParameterState.planes` to the trail edge each
+  one drives, shaped `"edges_trail"` and `"edges_trail 6"`, rather than the node that
+  edge leaves. COMPAS CEM carries both on the trail edge and both of its kernels read
+  them by edge key, so the nodewise keying was an artifact of the converter that
+  filled them rather than a decision. It cost a row per support, where no trail edge
+  leaves and nothing is read, and every caller had to zero those rows to stop
+  `length == 0.0` from meaning no outgoing edge as well as plane-driven; the trailing
+  `1` axis of `lengths`, which existed to be raveled off after the gather, goes with
+  them. Exact on the six fixtures: node positions, edge forces, edge lengths, and
+  residuals agree to 0.0, as do the gradients with respect to lengths, planes,
+  positions, and forces, under `jit`, `vmap`, and `jacobian`.
+- Changed `sequence_equilibrium` to take the trail edges of a sequence beside its
+  nodes, which the scan steps over together. A slot that no trail edge leaves reads
+  the last edge, which the padding mask and the slot the forces are gathered from then
+  drop, in the same way a padded node key already reads the last node.
+- Changed `ParameterState.xyz` to `xyz_origin`, the position of the origin node of
+  every trail, shaped `"trails 3"`. The sweep computes the position of every node it
+  steps onto from a node array seeded with zeros, so the origins were the only
+  positions the parameters were read for, and the remaining rows were named as inputs
+  without being any. The axis is `trails` rather than a node subset because the array
+  is the initial value of the per-trail position the scan carries, which makes a
+  mismatched count a shape error rather than a wrong answer.
+- Changed `node_length_plane` to take the plane that drives a trail edge, and
+  `nodes_length_plane` to take one plane per trail, in place of the parameter state and
+  an index into it. It is the one geometric step of the sweep, and taking a plane rather
+  than a state it indexes leaves the keying with the caller that owns it: the same
+  arithmetic no longer has to be reached through whichever entity the parameters happen
+  to be keyed by. Timed on trail grids under `jax.jit`, the two forms are level at 16,
+  400, and 3600 nodes, so this buys clarity and not speed.
 - Changed the equilibrium kernel from matrix products to gathers and scatters. Edge
   vectors are now `xyz[edges[:, 1]] - xyz[edges[:, 0]]`, and the deviation force is a
   `segment_sum` over the deviation edges rather than a dot product per node. Timed on
@@ -101,9 +159,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EquilibriumSequenceState` and throughout the kernel, so that `residuals` means one
   thing across the Formax libraries. The trail residual stays off `EquilibriumState`:
   the force in a trail edge and the vector of that edge already hold it.
-- Changed `deviation_vector` to `resultant_vector`, which takes the edge set it
+- Changed `sequences_edges` and `sequences_edges_indices` to one `Sequences.edges_slot`,
+  the slot of the layout that each trail edge occupies. The pair mapped a slot to an
+  edge and then selected the occupied slots, so reading a per-slot quantity back in
+  edge order took a gather and a scatter; inverting the map once, in the constructor,
+  turns it into a single gather and lets the grid go unstored. The old name was wrong
+  rather than loose: on the shifted fixture `sequences_edges_indices` held the value
+  10 for a structure with seven trail edges, because its values indexed the flattened
+  grid, not the edges.
+- Changed `EquilibriumStructure.origin_nodes` to a property reading `Sequences`, which
+  derives it from the layout rather than storing it beside it.
+- Changed `deviation_vector` to `nodes_resultant`, which takes the edge set it
   accumulates over. Nothing in it was specific to a deviation edge, and the nodal
   residual needs the same accumulation over every edge.
+- Changed `residual_trail_vector` to `residual_trail_next`, and settled the rule the
+  two renames follow: a helper carries an entity prefix when it is bound to that axis,
+  by scattering into it or gathering along it, and carries none when its arithmetic
+  broadcasts. The `_vector` suffix claimed a single vector where `nodes_resultant`
+  returns one per node, so it stated cardinality, which the shape annotation already
+  states, and stated it wrongly.
 - Changed `ParameterState.forces` to cover the deviation block alone, shaped
   `"edges_deviation"`. The trail entries were overwritten on every call and never read.
 - Changed `vector_length` to return a scalar rather than a one-element vector, which

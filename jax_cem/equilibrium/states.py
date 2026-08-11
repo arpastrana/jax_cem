@@ -72,3 +72,34 @@ class EquilibriumSequenceState(NamedTuple):
     xyz: Float[Array, "trails 3"]
     residuals_trail: Float[Array, "trails 3"]
     lengths: Float[Array, "trails"]
+
+
+class EquilibriumTrailsState(NamedTuple):
+    """
+    The state of every trail of a structure, at every sequence it spans.
+
+    Attributes
+    ----------
+    xyz :
+        The position of every node, carrying a dummy last row that a shifted
+        sequence indexes while it waits for its trail to start.
+    residuals_trail :
+        The force the outgoing trail edge carries, at the node every trail holds
+        in every sequence.
+    lengths :
+        The signed length of that outgoing trail edge.
+
+    Notes
+    -----
+    A sequence state holds one stage across all of the trails, so no trail is
+    whole in it. Stacking every stage is what completes them, which is what this
+    holds, and it is what an equilibrium state is assembled from.
+
+    The trailing axes count the sequences a structure spans rather than the trail
+    edges between them, which is one fewer. A consumer that reads the edges drops
+    the last entry.
+    """
+
+    xyz: Float[Array, "nodes_padded 3"]
+    residuals_trail: Float[Array, "sequences trails 3"]
+    lengths: Float[Array, "sequences trails"]

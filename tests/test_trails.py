@@ -5,6 +5,7 @@ from pytest_lazy_fixtures import lf
 
 from jax_cem.datastructures import align_trails
 from jax_cem.datastructures import build_trails
+from jax_cem.datastructures import is_edge_deviation_direct
 from jax_cem.datastructures import sequences_from_trails
 
 # ==============================================================================
@@ -103,6 +104,48 @@ def test_a_trail_runs_from_origin_to_support(braced_tower_2d):
 
 
 # ==============================================================================
+# Tests - Sequence layout
+# ==============================================================================
+
+
+def test_a_slot_names_the_edge_that_leaves_its_node(braced_tower_2d):
+    """
+    The edge of a slot joins the node of that slot to the next one on its trail.
+
+    Notes
+    -----
+    This fixture holds every trail edge against its trail direction, so an edge
+    is matched as a pair of nodes rather than in the order the structure keeps.
+    """
+    structure = structure_from_topology(braced_tower_2d)
+    nodes = np.asarray(structure.sequences.nodes)
+    edges = np.asarray(structure.sequences.edges)
+    edges_trail = np.asarray(structure.edges_trail)
+
+    for row, pair in enumerate(zip(nodes[:-1], nodes[1:])):
+        sequence, sequence_next = pair
+        for column, edge in enumerate(edges[row]):
+            if edge < 0:
+                continue
+            assert set(edges_trail[edge]) == {sequence[column], sequence_next[column]}
+
+
+def test_the_slot_of_an_edge_reads_the_edge_back(topology_shifted_sequences):
+    """
+    The two directions of the slot map agree, on a layout that pads and shifts.
+    """
+    structure = structure_from_topology(topology_shifted_sequences)
+    edges = np.asarray(structure.sequences.edges)
+    slots = np.asarray(structure.sequences.edges_slot)
+    trail_edges = np.arange(structure.num_edges_trail)
+
+    # the last sequence a trail reaches holds its support, which no edge leaves
+    assert np.all(edges[-1] < 0)
+    assert np.array_equal(edges[:-1].ravel()[slots], trail_edges)
+    assert np.array_equal(np.sort(edges[edges >= 0]), trail_edges)
+
+
+# ==============================================================================
 # Tests - Trail alignment
 # ==============================================================================
 
@@ -114,8 +157,8 @@ def test_align_trails_reproduces_the_reference_layout(topology_shifted_sequences
     reference = reference_sequences(topology_shifted_sequences)
     aligned = align_trails(structure_from_topology(topology_shifted_sequences))
 
-    assert aligned.sequences.shape == reference.shape
-    assert columns(np.asarray(aligned.sequences)) == columns(reference)
+    assert aligned.sequences.nodes.shape == reference.shape
+    assert columns(np.asarray(aligned.sequences.nodes)) == columns(reference)
 
 
 def test_aligning_twice_changes_nothing(topology_shifted_sequences):
@@ -125,7 +168,10 @@ def test_aligning_twice_changes_nothing(topology_shifted_sequences):
     once = align_trails(structure_from_topology(topology_shifted_sequences))
     twice = align_trails(once)
 
-    assert np.array_equal(np.asarray(once.sequences), np.asarray(twice.sequences))
+    assert np.array_equal(
+        np.asarray(once.sequences.nodes),
+        np.asarray(twice.sequences.nodes),
+    )
 
 
 def test_align_trails_leaves_an_aligned_structure_alone(threebar_funicular):
@@ -136,8 +182,8 @@ def test_align_trails_leaves_an_aligned_structure_alone(threebar_funicular):
     aligned = align_trails(structure)
 
     assert np.array_equal(
-        np.asarray(structure.sequences),
-        np.asarray(aligned.sequences),
+        np.asarray(structure.sequences.nodes),
+        np.asarray(aligned.sequences.nodes),
     )
 
 
@@ -149,11 +195,11 @@ def test_align_trails_can_trade_one_indirect_edge_for_another(braced_tower_2d):
     aligned = align_trails(structure)
 
     def indirect(candidate):
-        return int(np.sum(~np.asarray(candidate.is_edge_deviation_direct)))
+        return int(np.sum(~np.asarray(is_edge_deviation_direct(candidate))))
 
     assert (
-        np.asarray(aligned.sequences).shape[0]
-        > np.asarray(structure.sequences).shape[0]
+        np.asarray(aligned.sequences.nodes).shape[0]
+        > np.asarray(structure.sequences.nodes).shape[0]
     )
     assert indirect(aligned) == indirect(structure)
 
@@ -163,11 +209,11 @@ def test_align_trails_returns_a_new_structure(topology_shifted_sequences):
     The transform does not touch the structure it is given.
     """
     structure = structure_from_topology(topology_shifted_sequences)
-    before = np.asarray(structure.sequences).copy()
+    before = np.asarray(structure.sequences.nodes).copy()
 
     align_trails(structure)
 
-    assert np.array_equal(np.asarray(structure.sequences), before)
+    assert np.array_equal(np.asarray(structure.sequences.nodes), before)
 
 
 # ==============================================================================

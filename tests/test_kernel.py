@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from jax_cem.datastructures import EquilibriumStructure
+from jax_cem.datastructures import is_edge_deviation_direct
 from jax_cem.equilibrium import EquilibriumModel
 from jax_cem.parameters import ParameterState
 
@@ -53,24 +54,22 @@ def parameters(structure):
 
     Notes
     -----
-    A support takes a zero trail length, since no trail edge leaves it. The
-    origins are held apart so that no deviation edge starts out with zero length.
+    Every trail edge takes a unit length. The origins are held apart so that no
+    deviation edge starts out with zero length.
     """
     num_nodes = int(structure.num_nodes)
+    num_edges_trail = int(structure.num_edges_trail)
+    num_trails = int(structure.num_trails)
 
-    origins = np.asarray(structure.origin_nodes)
-    xyz = np.zeros((num_nodes, 3))
-    xyz[origins, 0] = np.arange(origins.size)
-
-    lengths = np.ones((num_nodes, 1))
-    lengths[np.asarray(structure.supports)] = 0.0
+    xyz_origin = np.zeros((num_trails, 3))
+    xyz_origin[:, 0] = np.arange(num_trails)
 
     return ParameterState(
-        xyz=jnp.asarray(xyz),
+        xyz_origin=jnp.asarray(xyz_origin),
         loads=jnp.tile(jnp.array([0.0, -1.0, 0.0]), (num_nodes, 1)),
         forces=jnp.full(int(structure.num_edges_deviation), 0.5),
-        lengths=jnp.asarray(lengths),
-        planes=jnp.zeros((num_nodes, 6)),
+        lengths=jnp.ones(num_edges_trail),
+        planes=jnp.zeros((num_edges_trail, 6)),
     )
 
 
@@ -111,7 +110,7 @@ def test_an_indirect_deviation_edge_is_left_out_of_the_first_pass():
     The first pass sees only the deviation edges that stay within a sequence.
     """
     structure = uneven_trails()
-    direct = np.asarray(structure.is_edge_deviation_direct)
+    direct = np.asarray(is_edge_deviation_direct(structure))
 
     assert direct.shape == (structure.num_edges_deviation,)
     assert direct.dtype == bool
@@ -163,6 +162,25 @@ def test_the_structure_carries_its_loads_to_the_supports(build):
     assert np.allclose(residuals.sum(axis=0), loads.sum(axis=0), atol=1e-6)
 
 
+@pytest.mark.parametrize("build", STRUCTURES, ids=lambda build: build.__name__)
+def test_the_origin_positions_land_on_the_origin_nodes(build):
+    """
+    The origin positions are column-aligned with the trails, not keyed by node.
+
+    Notes
+    -----
+    The origins are spread along x, so a column read in the wrong order moves a
+    trail rather than leaving the result unchanged.
+    """
+    structure = build()
+    params = parameters(structure)
+
+    state = EquilibriumModel(tmax=100)(params, structure)
+    origins = np.asarray(structure.origin_nodes)
+
+    assert np.allclose(np.asarray(state.xyz)[origins], np.asarray(params.xyz_origin))
+
+
 # ==============================================================================
 # Tests - Padded sequences
 # ==============================================================================
@@ -171,16 +189,23 @@ def test_the_structure_carries_its_loads_to_the_supports(build):
 def test_a_padded_sequence_still_builds_every_trail_edge():
     """
     Trails of unequal length pad the sequences, which must not reach the result.
+
+    Notes
+    -----
+    The lengths differ per edge, and the slot the short trail leaves empty reads
+    the last of them, so a padded slot that escaped the mask would stretch an
+    edge rather than leave the result untouched.
     """
     structure = uneven_trails()
-    assert np.any(np.asarray(structure.sequences) < 0), "no padding to exercise"
+    assert np.any(np.asarray(structure.sequences.nodes) < 0), "no padding to exercise"
+    assert np.any(np.asarray(structure.sequences.edges) < 0), "no empty slot"
 
     params = ParameterState(
-        xyz=jnp.zeros((5, 3)),
+        xyz_origin=jnp.zeros((2, 3)),
         loads=jnp.tile(jnp.array([0.0, -1.0, 0.0]), (5, 1)),
         forces=jnp.array([0.5]),
-        lengths=jnp.array([[1.0], [2.0], [0.0], [3.0], [0.0]]),
-        planes=jnp.zeros((5, 6)),
+        lengths=jnp.array([1.0, 2.0, 3.0]),
+        planes=jnp.zeros((3, 6)),
     )
 
     state = EquilibriumModel()(params, structure)

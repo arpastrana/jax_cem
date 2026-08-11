@@ -52,18 +52,9 @@ def align_trails(structure: "EquilibriumStructure") -> "EquilibriumStructure":
     edges = np.asarray(structure.edges)
     shifts = _shifts_from_indirect_edges(trails, np.asarray(structure.edges_deviation))
 
-    data = build_sequences(trails, edges, shifts)
+    sequences = build_sequences(trails, edges, shifts)
 
-    return eqx.tree_at(
-        lambda s: (
-            s.sequences,
-            s.origin_nodes,
-            s.sequences_edges,
-            s.sequences_edges_indices,
-        ),
-        structure,
-        replace=tuple(data),
-    )
+    return eqx.tree_at(lambda s: s.sequences, structure, replace=sequences)
 
 
 def trails_of(structure: "EquilibriumStructure") -> list[tuple[int, ...]]:
@@ -85,7 +76,7 @@ def trails_of(structure: "EquilibriumStructure") -> list[tuple[int, ...]]:
     A shift moves a trail down the sequences without reordering it, so dropping
     the padding recovers the trail the search found.
     """
-    sequences = np.asarray(structure.sequences)
+    sequences = np.asarray(structure.sequences.nodes)
 
     return [tuple(int(node) for node in column[column >= 0]) for column in sequences.T]
 

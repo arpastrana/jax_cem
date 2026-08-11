@@ -2,9 +2,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
-from jaxtyping import Bool
 from jaxtyping import Int
 
+from jax_cem.datastructures.sequences import Sequences
 from jax_cem.datastructures.sequences import build_sequences
 from jax_cem.datastructures.trails import build_trails
 
@@ -42,10 +42,7 @@ class EquilibriumStructure(Structure):
     edges_trail: Int[Array, "edges_trail 2"]
     edges_deviation: Int[Array, "edges_deviation 2"]
 
-    sequences: Int[Array, "sequences trails"]
-    origin_nodes: Int[Array, "trails"]
-    sequences_edges: Int[Array, "sequences_edges trails"]
-    sequences_edges_indices: Int[Array, "edges_trail"]
+    sequences: Sequences
 
     def __init__(
         self,
@@ -65,17 +62,13 @@ class EquilibriumStructure(Structure):
         edges = np.concatenate((edges_trail, edges_deviation))
 
         trails = build_trails(nodes, supports, edges_trail)
-        data = build_sequences(trails, edges)
 
         self.nodes = jnp.asarray(nodes)
         self.supports = jnp.asarray(supports)
         self.edges_trail = jnp.asarray(edges_trail)
         self.edges_deviation = jnp.asarray(edges_deviation)
 
-        self.sequences = data.sequences
-        self.origin_nodes = data.origin_nodes
-        self.sequences_edges = data.sequences_edges
-        self.sequences_edges_indices = data.sequences_edges_indices
+        self.sequences = build_sequences(trails, edges)
 
     def __check_init__(self):
         """
@@ -111,29 +104,11 @@ class EquilibriumStructure(Structure):
         return jnp.concatenate((self.edges_trail, self.edges_deviation), axis=-2)
 
     @property
-    def is_edge_deviation_direct(self) -> Bool[Array, "edges_deviation"]:
+    def origin_nodes(self) -> Int[Array, "trails"]:
         """
-        Mask the deviation edges whose two nodes share a sequence.
-
-        Notes
-        -----
-        A deviation edge that spans two sequences is indirect, and only the
-        iterative equilibrium resolves it. Which edges those are follows from the
-        sequences, so it is derived here rather than stored, and it cannot fall
-        out of step with a trail that shifts.
+        The first node of each trail, column-aligned with the sequences.
         """
-        rows = jnp.broadcast_to(
-            jnp.arange(self.num_sequences)[:, None],
-            self.sequences.shape,
-        )
-
-        # a padded sequence entry is -1, which lands on the extra last slot
-        sequence_of = jnp.full(self.num_nodes + 1, -1, dtype=int)
-        sequence_of = sequence_of.at[self.sequences].set(rows)[:-1]
-
-        nodes_u, nodes_v = self.edges_deviation[:, 0], self.edges_deviation[:, 1]
-
-        return sequence_of[nodes_u] == sequence_of[nodes_v]
+        return self.sequences.origin_nodes
 
     @property
     def node_index(self) -> dict[int, int]:
@@ -190,11 +165,11 @@ class EquilibriumStructure(Structure):
         """
         The number of trails.
         """
-        return self.sequences.shape[-1]
+        return self.sequences.nodes.shape[-1]
 
     @property
     def num_sequences(self) -> int:
         """
         The number of sequences.
         """
-        return self.sequences.shape[-2]
+        return self.sequences.nodes.shape[-2]

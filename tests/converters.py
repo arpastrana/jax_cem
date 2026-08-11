@@ -55,11 +55,17 @@ def parameters_from_topology(topology, structure):
     edges before deviation edges, rather than the order of the diagram. Only
     deviation edges carry a force parameter, and they occupy the tail of that
     order, so their index is offset by the trail edge count.
+
+    A length and a plane belong to a trail edge, so the walk over the trails is
+    what resolves them: a diagram holds an edge in either orientation, and only
+    the trail direction says which node the edge positions.
     """
     nodes = sorted(topology.nodes())
 
     loads = jnp.asarray([topology.node_load(node) for node in nodes])
-    xyz = jnp.asarray([topology.node_coordinates(node) for node in nodes])
+
+    origins = np.asarray(structure.origin_nodes)
+    xyz_origin = jnp.asarray([topology.node_coordinates(int(o)) for o in origins])
 
     forces = np.zeros(structure.num_edges_deviation)
     edge_index = structure.edge_index
@@ -71,25 +77,26 @@ def parameters_from_topology(topology, structure):
         index = edge_index.get((u, v), edge_index.get((v, u)))
         forces[index - start] = topology.edge_force(edge)
 
-    lengths = np.zeros((topology.number_of_nodes(), 1))
-    planes = np.zeros((topology.number_of_nodes(), 6))
+    lengths = np.zeros(structure.num_edges_trail)
+    planes = np.zeros((structure.num_edges_trail, 6))
 
     edges = list(topology.edges())
     for trail in topology.trails():
         for u, v in pairwise(trail):
             edge = (u, v) if (u, v) in edges else (v, u)
+            index = edge_index[edge]
             plane = topology.edge_plane(edge)
             if plane is not None:
                 origin, normal = plane
-                planes[u, :] = [*origin, *normal]
+                planes[index, :] = [*origin, *normal]
             else:
                 length = topology.edge_length_2(edge)
                 if not length:
                     raise ValueError(f"No length defined on trail edge {edge}")
-                lengths[u, :] = length
+                lengths[index] = length
 
     return ParameterState(
-        xyz=xyz,
+        xyz_origin=xyz_origin,
         loads=loads,
         lengths=jnp.asarray(lengths),
         planes=jnp.asarray(planes),

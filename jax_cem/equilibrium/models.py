@@ -8,8 +8,10 @@ from jaxtyping import Float
 from jaxtyping import Int
 
 from jax_cem.datastructures import EquilibriumStructure
+from jax_cem.datastructures import is_edge_deviation_direct
 from jax_cem.equilibrium import EquilibriumSequenceState
 from jax_cem.equilibrium import EquilibriumState
+from jax_cem.equilibrium import EquilibriumTrailsState
 from jax_cem.geometry import vector_length
 from jax_cem.geometry import vector_normalized
 from jax_cem.parameters import ParameterState
@@ -67,20 +69,19 @@ class EquilibriumModel:
         - No shape dependent loads exist in the structure.
         """
         xyz = jnp.zeros((structure.num_nodes + 1, 3))
-        data = self.equilibrium(params, structure, xyz)
+        trails_state = self.equilibrium(params, structure, xyz)
 
         if self.tmax > 1:
-            xyz, *_ = data
-            data = self.equilibrium_iterative(
+            trails_state = self.equilibrium_iterative(
                 params,
                 structure,
-                xyz,
+                trails_state.xyz,
                 self.tmax,
                 self.eta,
                 self.scale,
             )
 
-        return self.equilibrium_state(params, structure, data)
+        return self.equilibrium_state(params, structure, trails_state)
 
     # ------------------------------------------------------------------------------
     #  Equilibrium state
@@ -90,27 +91,25 @@ class EquilibriumModel:
         self,
         params: ParameterState,
         structure: EquilibriumStructure,
-        data: tuple[
-            Float[Array, "nodes_padded 3"],
-            Float[Array, "sequences trails 3"],
-            Float[Array, "sequences trails"],
-        ],
+        trails_state: EquilibriumTrailsState,
     ) -> EquilibriumState:
         """
         Assemble an equilibrium state.
-        """
-        # Unpack data
-        xyz, residuals_trail, lengths = data
 
+        Notes
+        -----
+        The trails state counts the sequences a structure spans, so the last
+        entry of its trailing axes falls outside the trail edges between them.
+        """
         # Node positions
         # NOTE: We remove the dummy last row created in __call__()
-        xyz = xyz[:-1]
+        xyz = trails_state.xyz[:-1]
 
         # Edge forces, which read the trail residual of every sequence
         forces = self.edges_force(
             structure,
-            residuals_trail[:-1, :],
-            lengths[:-1, :],
+            trails_state.residuals_trail[:-1, :],
+            trails_state.lengths[:-1, :],
             params.forces,
         )
 
@@ -140,11 +139,7 @@ class EquilibriumModel:
         params: ParameterState,
         structure: EquilibriumStructure,
         xyz: Float[Array, "nodes_padded 3"],
-    ) -> tuple[
-        Float[Array, "nodes_padded 3"],
-        Float[Array, "sequences trails 3"],
-        Float[Array, "sequences trails"],
-    ]:
+    ) -> EquilibriumTrailsState:
         """
         Calculate static equilibrium on a structure.
         """
@@ -158,11 +153,7 @@ class EquilibriumModel:
         tmax: int,
         eta: float,
         scale: float,
-    ) -> tuple[
-        Float[Array, "nodes_padded 3"],
-        Float[Array, "sequences trails 3"],
-        Float[Array, "sequences trails"],
-    ]:
+    ) -> EquilibriumTrailsState:
         """
         Calculate static equilibrium on a structure iteratively.
         """
@@ -179,13 +170,13 @@ class EquilibriumModel:
 
         def body_fn(val):
             xyz_last, _ = val
-            xyz, _, _ = self.sequences_equilibrium(
+            trails_state = self.sequences_equilibrium(
                 params,
                 structure,
                 xyz_last,
                 use_indirect=True,
             )
-            return xyz, xyz_last
+            return trails_state.xyz, xyz_last
 
         # Initialize iteration
         init_val = xyz * scale, xyz
@@ -216,11 +207,7 @@ class EquilibriumModel:
         structure: EquilibriumStructure,
         xyz: Float[Array, "nodes_padded 3"],
         use_indirect: bool,
-    ) -> tuple[
-        Float[Array, "nodes_padded 3"],
-        Float[Array, "sequences trails 3"],
-        Float[Array, "sequences trails"],
-    ]:
+    ) -> EquilibriumTrailsState:
         """
         Calculates equilibrium on all the sequences of a structure.
 
@@ -232,21 +219,21 @@ class EquilibriumModel:
         """
         forces = params.forces
         if not use_indirect:
-            forces = jnp.where(structure.is_edge_deviation_direct, forces, 0.0)
+            forces = jnp.where(is_edge_deviation_direct(structure), forces, 0.0)
 
         def calculate_sequence_state_start():
             """
             Creates an initial scan state.
             """
-            xyz_seq = params.xyz[structure.origin_nodes, :]
             residuals_trail = jnp.zeros((structure.num_trails, 3))
 
-            return xyz, xyz_seq, residuals_trail
+            return xyz, params.xyz_origin, residuals_trail
 
-        def calculate_sequence_state(state, sequence):
+        def calculate_sequence_state(state, sequence_slots):
             """
             Compute static equilibrium on a sequence of nodes in a scan-compatible way.
             """
+            sequence, edges_seq = sequence_slots
             _xyz, xyz_seq, residuals_trail = state
             _xyz = _xyz.at[sequence, :].set(xyz_seq)
 
@@ -254,6 +241,7 @@ class EquilibriumModel:
                 params,
                 structure,
                 sequence,
+                edges_seq,
                 _xyz,
                 xyz_seq,
                 residuals_trail,
@@ -272,18 +260,23 @@ class EquilibriumModel:
         state_end, (residuals_trail, lengths_seqs) = scan(
             calculate_sequence_state,
             state_start,
-            structure.sequences,
+            (structure.sequences.nodes, structure.sequences.edges),
         )
 
         xyz, *_ = state_end
 
-        return xyz, residuals_trail, lengths_seqs
+        return EquilibriumTrailsState(
+            xyz=xyz,
+            residuals_trail=residuals_trail,
+            lengths=lengths_seqs,
+        )
 
     def sequence_equilibrium(
         self,
         params: ParameterState,
         structure: EquilibriumStructure,
         sequence: Int[Array, "trails"],
+        edges_seq: Int[Array, "trails"],
         xyz: Float[Array, "nodes_padded 3"],
         xyz_seq: Float[Array, "trails 3"],
         residuals_trail: Float[Array, "trails 3"],
@@ -291,6 +284,12 @@ class EquilibriumModel:
     ) -> EquilibriumSequenceState:
         """
         Compute static equilibrium on all the nodes of a sequence.
+
+        Notes
+        -----
+        A slot that no trail edge leaves reads the length and the plane of the
+        last edge, which the padding mask and the slot the forces are gathered
+        from then drop, in the same way a padded node key reads the last node.
         """
         # Padding mask
         is_sequence_padded = jnp.reshape(sequence, (-1, 1)) < 0
@@ -310,12 +309,11 @@ class EquilibriumModel:
         # NOTE: Probably inefficient to pre-compute both versions of length.
         # Passing the length functions to jnp.where may skip one evaluation.
         lengths_plane = self.nodes_length_plane(
-            params,
-            sequence,
+            params.planes[edges_seq, :],
             xyz_seq,
             residuals_trail,
         )
-        lengths_signed = params.lengths[sequence].ravel()
+        lengths_signed = params.lengths[edges_seq]
         lengths_seq = jnp.where(lengths_signed != 0.0, lengths_signed, lengths_plane)
 
         # Position of the next node
@@ -356,7 +354,7 @@ class EquilibriumModel:
         """
         deviations = self.nodes_deviation(structure, xyz, forces)
 
-        return residual_trail_vector(
+        return residual_trail_next(
             residuals_trail,
             deviations[sequence, :],
             params.loads[sequence, :],
@@ -379,7 +377,7 @@ class EquilibriumModel:
         edges = structure.edges_deviation
         vectors = vmap(vector_normalized)(edges_vector(xyz, edges))
 
-        return resultant_vector(forces, vectors, edges, structure.num_nodes)
+        return nodes_resultant(forces, vectors, edges, structure.num_nodes)
 
     # ------------------------------------------------------------------------------
     # Node position
@@ -413,33 +411,33 @@ class EquilibriumModel:
 
     def nodes_length_plane(
         self,
-        params: ParameterState,
-        sequence: Int[Array, "trails"],
+        planes_seq: Float[Array, "trails 6"],
         xyz_seq: Float[Array, "trails 3"],
         residuals_trail: Float[Array, "trails 3"],
     ) -> Float[Array, "trails"]:
         """
         Calculate the outgoing edge lengths in a sequence. Vectorized.
         """
-        node_length_plane_vmap = vmap(self.node_length_plane, in_axes=(None, 0, 0, 0))
+        node_length_plane_vmap = vmap(self.node_length_plane)
 
-        return node_length_plane_vmap(params, sequence, xyz_seq, residuals_trail)
+        return node_length_plane_vmap(planes_seq, xyz_seq, residuals_trail)
 
     def node_length_plane(
         self,
-        params: ParameterState,
-        index: Int[Array, ""],
+        plane: Float[Array, "6"],
         xyz: Float[Array, "3"],
         residual_trail: Float[Array, "3"],
     ) -> Float[Array, ""]:
         """
-        Compute the outgoing length from a node.
+        Compute the length of a trail edge from the plane that drives it.
 
         Notes
         -----
+        The plane arrives as data, so the arithmetic reads no entity and the keying
+        stays with the caller.
+
         It assumes that the trail residual and plane normal vector are not parallel.
         """
-        plane = params.planes[index, :]
         origin = plane[:3]
         normal = plane[3:]
 
@@ -500,7 +498,7 @@ class EquilibriumModel:
         """
         units = vmap(vector_normalized)(vectors)
         edges = structure.edges
-        resultants = resultant_vector(forces, units, edges, structure.num_nodes)
+        resultants = nodes_resultant(forces, units, edges, structure.num_nodes)
 
         return loads + resultants
 
@@ -520,22 +518,16 @@ class EquilibriumModel:
 
         Notes
         -----
-        A sequence pair that no trail spans holds a padding entry, so the flat
-        trail residuals are gathered down to the trail edges before they are
-        scattered into the trail block. The deviation block is a parameter, and
-        the two concatenate in the edge order of the structure.
+        The layout carries one slot per trail per sequence pair, and a trail that
+        does not span a pair leaves its slot empty, so the trail forces come out
+        in the order of the layout rather than of the edges. The slot each edge
+        occupies reorders them in one gather, which drops the padding with them.
+
+        The deviation block is a parameter, and the two concatenate in the edge
+        order of the structure.
         """
         trail_forces = self.trails_force(residuals_trail, lengths)
-
-        indices = structure.sequences_edges_indices
-        trail_forces = trail_forces[indices]
-
-        sequences_edges_flat = jnp.ravel(structure.sequences_edges)
-        trail_indices = sequences_edges_flat[indices]
-
-        # the dtype follows the trail residuals, so only the concatenation promotes
-        forces_trail = jnp.zeros(structure.num_edges_trail, dtype=trail_forces.dtype)
-        forces_trail = forces_trail.at[trail_indices].set(trail_forces)
+        forces_trail = trail_forces[structure.sequences.edges_slot]
 
         return jnp.concatenate((forces_trail, forces))
 
@@ -565,7 +557,7 @@ class EquilibriumModel:
 # ------------------------------------------------------------------------------
 
 
-def resultant_vector(
+def nodes_resultant(
     forces: Float[Array, "edges_any"],
     vectors: Float[Array, "edges_any 3"],
     edges: Int[Array, "edges_any 2"],
@@ -621,18 +613,21 @@ def trail_force(residual_trail: Float[Array, "3"]) -> Float[Array, ""]:
     return vector_length(residual_trail)
 
 
-def residual_trail_vector(
+def residual_trail_next(
     residual_trail: Float[Array, "trails 3"],
     deviation: Float[Array, "trails 3"],
     load: Float[Array, "trails 3"],
 ) -> Float[Array, "trails 3"]:
     """
-    The updated trail residual at a node.
+    The trail residual a node passes on to its outgoing trail edge.
 
     Notes
     -----
     What the incoming trail edge delivers, less what the deviation edges and the
     load take, is what the outgoing trail edge is left to carry.
+
+    The arithmetic broadcasts, so the function is not bound to the trail axis it
+    is called on and carries no entity in its name.
     """
     return residual_trail - deviation - load
 

@@ -67,6 +67,75 @@ these arrays. It is deferred rather than rejected: it adds nothing the kernel or
 the Formax adapter needs, and building it first would mean merging topology and
 parameters in one object only to separate them again one function later.
 
+### Trail edge lengths and planes are edgewise
+
+`ParameterState.lengths` and `ParameterState.planes` are keyed by the trail edge each
+one drives, shaped `"edges_trail"` and `"edges_trail 6"`, not by the node that edge
+leaves.
+
+The nodewise keying was a translation artifact rather than a decision. COMPAS CEM
+carries both on the trail edge, and both of its kernels read them by edge key after
+resolving the node from its trail and its sequence; nothing upstream keys a length by
+the node whose outgoing edge it governs. The re-keying happened once, in the converter,
+and the kernel was written against its output.
+
+Nodewise the arrays are oversized and the sentinel carries a second meaning. Every
+trail ends at one support and every other node leaves exactly one trail edge, so a
+structure has `nodes - trails` trail edges and the support rows are never read: a
+length set at a support does nothing, and every caller has to zero those rows to keep
+`length == 0.0` from meaning three things at once — plane-driven, no outgoing edge, or
+genuinely zero. Edgewise the second meaning is gone, and the trailing `1` axis with
+it, which leaves the parameters split by entity: `xyz` and `loads` per node, `forces`,
+`lengths`, and `planes` per edge.
+
+This lands before the sentinel that phase 2 deferred, not after. The mask that
+replaces the reserved value is one flag per trail edge, so it has a shape only once
+the parameters it masks have one.
+
+`Sequences` gains `edges`, the trail edge outgoing from the node at each slot of the
+layout and `-1` where a slot has none. It is the slot-to-edge map `build_sequences`
+already computes and inverts into `edges_slot`, kept rather than discarded, so neither
+can fall out of step with a trail that shifts, and the scan steps over the node row
+and the edge row of a sequence together.
+
+Two alternatives were rejected. Parameters shaped to the layout need no map at all,
+but a shift rewrites the layout and would silently re-address them, which is the
+failure the fixed edge order exists to avoid. A node-to-edge map on the structure
+leaves the scan signature untouched and is invariant under a shift, but it reaches a
+length through two gathers rather than one, and it states a fact about the trails in a
+second place.
+
+Which edge a node's length governs follows from the trail direction and not from the
+stored orientation of that edge: a structure may hold a trail edge as `(v, u)`, and on
+the braced tower fixture all four are held that way. The orientation never reaches the
+equilibrium, because the length is applied along the trail residual, but whatever
+fills the arrays has to walk the trails rather than read the edge array.
+
+The change is exact. Measured against the nodewise kernel on the six fixtures: node
+positions, edge forces, edge lengths, and residuals agree to 0.0, as do the gradients
+with respect to lengths, planes, positions, and forces, under `jit`, `vmap`, and
+`jacobian`. A padded slot gathers at `-1` and wraps to the last row, as a padded node
+key already does, and what it computes there reaches only the dummy position row and
+the layout slots that the `edges_slot` gather drops.
+
+### Only the origin positions are parameters
+
+`ParameterState.xyz_origin` holds the position of the origin node of every trail,
+shaped `"trails 3"`, where the field was `xyz` over every node.
+
+A sweep computes the position of every node it steps onto, and the node array it steps
+through is seeded with zeros, so the origins were the only positions the parameters
+were ever read for. The rest of the rows were named as inputs and were not, which is
+the same oversizing the lengths and the planes carried, in the other entity.
+
+The axis is `trails` and not a node subset, because the array is the initial value of
+the per-trail position the scan carries and shares that axis with it, which is what
+lets a mismatched count fail as a shape rather than as an answer. The order is the
+order of the trails, which `EquilibriumStructure.origin_nodes` states; a shift moves a
+trail down the sequences without reordering the trails, so alignment leaves it alone.
+`jax_fdm` restricts the same field the same way and names it for the subset it holds,
+`xyz_fixed`.
+
 ### `edges` is a property
 
 Verified against equinox 0.13.8: a property satisfies `eqx.AbstractVar`. The class

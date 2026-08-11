@@ -30,11 +30,11 @@ def parameters(force):
     The parameters of a four node chain, with one force on the deviation edge.
     """
     return ParameterState(
-        xyz=jnp.zeros((4, 3)),
+        xyz_origin=jnp.zeros((1, 3)),
         loads=jnp.tile(jnp.array([0.0, -1.0, 0.0]), (4, 1)),
         forces=jnp.array([force]),
-        lengths=jnp.array([[1.0], [1.0], [1.0], [0.0]]),
-        planes=jnp.zeros((4, 6)),
+        lengths=jnp.ones(3),
+        planes=jnp.zeros((3, 6)),
     )
 
 
@@ -138,7 +138,7 @@ def test_the_gradient_of_a_batch_is_finite():
 
     def loss(length):
         params = parameters(0.5)
-        lengths = params.lengths.at[0, 0].set(length)
+        lengths = params.lengths.at[0].set(length)
 
         return jnp.sum(model(params._replace(lengths=lengths), structure).xyz ** 2)
 

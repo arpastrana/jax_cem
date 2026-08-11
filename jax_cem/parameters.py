@@ -14,24 +14,35 @@ class ParameterState(NamedTuple):
 
     Attributes
     ----------
-    xyz :
-        The start position of every node, of which only the origin nodes are read.
+    xyz_origin :
+        The position of the origin node of every trail, column-aligned with the
+        sequences.
     loads :
         The load vector applied at every node.
     forces :
         The force in every deviation edge. A trail edge force is an output,
         recovered from the trail residual that passes through it.
     lengths :
-        The signed length of the trail edge outgoing from every node, where zero
-        hands the length over to the plane of the node.
+        The signed length of every trail edge, where zero hands the length over
+        to the plane of the edge.
     planes :
-        The origin and the normal of the plane that positions the next node on a
-        trail, where a zero normal marks a node without one.
+        The origin and the normal of the plane that positions the node at the far
+        end of every trail edge, where a zero normal marks an edge without one.
+
+    Notes
+    -----
+    The lengths and the planes are keyed by the trail edge they drive rather than
+    by the node that edge leaves. Every trail ends at a support, where no trail
+    edge leaves and neither of them is read, so a nodewise array would spend a row
+    on each one.
+
+    A sweep positions every node but the origins, so the origins are the only
+    positions it takes. Their order is the order of the trails, which
+    `EquilibriumStructure.origin_nodes` states.
     """
 
-    xyz: Float[Array, "nodes 3"]
+    xyz_origin: Float[Array, "trails 3"]
     loads: Float[Array, "nodes 3"]
     forces: Float[Array, "edges_deviation"]
-    # TODO: find a way to treat edge lengths and planes edgewise, not nodewise
-    lengths: Float[Array, "nodes 1"]
-    planes: Float[Array, "nodes 6"]
+    lengths: Float[Array, "edges_trail"]
+    planes: Float[Array, "edges_trail 6"]
