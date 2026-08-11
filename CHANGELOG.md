@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added an `__all__` to `jax_cem.equilibrium.models`, holding the model alone, and one
+  to `jax_cem.equilibrium.states`, holding the three states, which the modules of
+  `jax_cem.datastructures` already carry. The star imports that `jax_cem.equilibrium`
+  runs over the two had no list to read, so they published every helper and every
+  imported symbol: `jnp`, `vmap`, `scan`, and `segment_sum` from the first, and `Array`,
+  `Float`, and `NamedTuple` from the second. The functions stay reachable by their
+  module path.
 - Added `Sequences.edges`, the trail edge outgoing from the node at each slot of the
   layout and `-1` where a slot has none. It is the slot-to-edge map `build_sequences`
   already builds in order to invert it into `edges_slot`, kept rather than discarded,
@@ -34,19 +41,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once, and one field cannot fall out of step with itself.
 - Added `is_edge_deviation_direct` as a function, taking a structure, where it was a
   property. It scatters and gathers, which attribute syntax hid.
-- Added `EquilibriumTrailsState`, which names the triple that `equilibrium`,
-  `equilibrium_iterative`, and `sequences_equilibrium` return and `equilibrium_state`
-  consumes. The triple crossed four boundaries unnamed, which cost a repeated inline
-  annotation at every one of them and left the callers unpacking it positionally. A
+- Added `EquilibriumTrailsState`, which names the triple that `equilibrium_iterative`
+  and `sequences_equilibrium` return and `equilibrium_state` consumes. The triple
+  crossed those boundaries unnamed, which cost a repeated inline annotation at every
+  one of them and left the callers unpacking it positionally. A
   sequence state holds one stage across all the trails, so no trail is whole in it;
   stacking every stage is what completes them, which is what this holds.
 - Added `EquilibriumStructure.is_edge_deviation_direct`, a property that masks the
   deviation edges whose two nodes share a sequence. It replaces a stored field:
   which edges those are follows from the sequences, so deriving it means it cannot
   fall out of step with a trail that shifts.
-- Added `EquilibriumModel.nodes_deviation`, which accumulates the deviation force at
-  every node, and `EquilibriumModel.nodes_residual`, which assembles the residual at
-  every node from the edge forces and the loads.
+- Added `nodes_deviation`, which accumulates the deviation force at every node, and
+  `nodes_residual`, which assembles the residual at every node from the edge forces
+  and the loads.
 - Added an edge range check to `EquilibriumStructure.__check_init__`. `scipy` used to
   reject a negative node key on the caller's behalf while building the connectivity
   matrix; without the matrix a negative key would wrap and the accumulation would drop
@@ -98,6 +105,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Changed `EquilibriumModel` to hold the sweep alone, moving the nine quantities it
+  computed to functions of `jax_cem.equilibrium.models`: `nodes_equilibrium`,
+  `nodes_deviation`, `nodes_position`, `nodes_length_plane`, `node_length_plane`,
+  `edges_length`, `nodes_residual`, `edges_force`, and `trails_force`. The class held
+  seventeen members and one of them read a setting, `__call__`; every other mention of
+  `self` was a lookup of a sibling, which is a namespace rather than an object. Six
+  members remain. A test that reached a quantity by constructing a model it had no use
+  for now calls the function.
 - Changed `ParameterState.lengths` and `ParameterState.planes` to the trail edge each
   one drives, shaped `"edges_trail"` and `"edges_trail 6"`, rather than the node that
   edge leaves. COMPAS CEM carries both on the trail edge and both of its kernels read
@@ -235,6 +250,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Removed `EquilibriumModel.node_position` and `EquilibriumModel.equilibrium`, which
+  forwarded rather than computed: the first called `position_vector` with the arguments
+  it was given, and the second called the sweep with `use_indirect=False`. A wrapper
+  that lifts a scalar function onto an entity axis was kept, since the `vmap` is the
+  work; one that only renames its callee was not.
+- Removed `EquilibriumModel.verbose`, which was assigned in the constructor and read
+  nowhere.
 - Removed `EquilibriumStructure.connectivity` and `connectivity_matrix`, which the
   gather and scatter kernel leaves with no reader. `connectivity_matrix` was public
   through the star import of `jax_cem.datastructures`, which now carries an `__all__`.

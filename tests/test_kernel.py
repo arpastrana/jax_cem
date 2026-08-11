@@ -5,6 +5,7 @@ import pytest
 from jax_cem.datastructures import EquilibriumStructure
 from jax_cem.datastructures import is_edge_deviation_direct
 from jax_cem.equilibrium import EquilibriumModel
+from jax_cem.equilibrium.models import nodes_deviation
 from jax_cem.parameters import ParameterState
 
 # ==============================================================================
@@ -96,7 +97,7 @@ def test_a_deviation_force_pushes_a_node_toward_the_far_end():
         [[0.0, 0.0, 0.0], [0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [1.0, -1.0, 0.0]],
     )
 
-    deviations = EquilibriumModel().nodes_deviation(structure, xyz, jnp.array([1.0]))
+    deviations = nodes_deviation(structure, xyz, jnp.array([1.0]))
 
     # node 0 sits at the tail of the edge and node 2 at its head
     assert np.allclose(deviations[0], [1.0, 0.0, 0.0])

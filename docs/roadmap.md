@@ -136,6 +136,48 @@ trail down the sequences without reordering the trails, so alignment leaves it a
 `jax_fdm` restricts the same field the same way and names it for the subset it holds,
 `xyz_fixed`.
 
+### The model holds the sweep, not the quantities
+
+`EquilibriumModel` holds the settings of the solver and the control flow they drive:
+the sweep over the sequences, the fixed point that resolves the indirect deviation
+edges, and the state a call returns. Every quantity a step of that sweep computes is a
+function of `jax_cem.equilibrium.models`.
+
+What `self` carried is what exposed the split. Of the seventeen members the class held,
+exactly one read a setting, `__call__`. Every other mention of `self` was a lookup of a
+sibling method, which makes the class a namespace rather than an object.
+
+The line is drawn on the entity and not on whether a member happens to read `self`,
+which is an accident that drifts as soon as someone adds a call. A quantity is a
+function and the sweep that orders them is the class. The functions that move out are
+the entity-level forms of the primitives that already sat at the bottom of the file —
+`trails_force` over `trail_force`, `nodes_deviation` and `nodes_residual` over
+`nodes_resultant` — so the module gains one layer rather than a list.
+
+What stays does not stay because it needs the settings, since `equilibrium_state` and
+`sequence_equilibrium` read none. It stays because it is the seam a variant model
+overrides, which is how the edgewise keying was prototyped before it landed. A variant
+quantity is a different function, and composing functions needs no seam. A member that
+only forwarded to a helper went rather than moved.
+
+### The model is a plain class
+
+`EquilibriumModel` is a plain Python class and not an `eqx.Module`, though the state
+and the structure are modules and the Formax model protocol is one.
+
+Nothing the model holds is differentiable. Its fields are solver settings, and `tmax`
+gates a Python branch as well as the step count of the iteration; as a leaf of a module
+it would be traced, and the branch would fail the moment a model reached a transform as
+an argument rather than as a closure. Declaring the field static is the fix, and
+nothing needs it yet. `eta` and `scale` reach only traced arithmetic, so they could be
+leaves the day a batch over tolerances is wanted.
+
+The module identity belongs to the wrapper rather than to the kernel. Formax makes a
+model a module so that a model can be a field of another model, which is what its mixed
+model is, and so that its abstract protocol is nominal rather than structural. Its own
+audit of `jax_fdm` records the plain class there as the configuration and parameter
+split it wants, and this follows it.
+
 ### `edges` is a property
 
 Verified against equinox 0.13.8: a property satisfies `eqx.AbstractVar`. The class

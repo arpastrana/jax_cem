@@ -3,6 +3,12 @@ from typing import NamedTuple
 from jaxtyping import Array
 from jaxtyping import Float
 
+__all__ = [
+    "EquilibriumSequenceState",
+    "EquilibriumState",
+    "EquilibriumTrailsState",
+]
+
 
 class EquilibriumState(NamedTuple):
     """
