@@ -7,8 +7,8 @@ from jaxtyping import Int
 from scipy.sparse import coo_matrix
 from scipy.sparse import csc_matrix
 
-from jax_cem.datastructures.trails import sequence_data
-from jax_cem.datastructures.trails import trails_from_edges
+from jax_cem.datastructures.sequences import build_sequences
+from jax_cem.datastructures.trails import build_trails
 
 # ------------------------------------------------------------------------------
 # Connectivity
@@ -106,8 +106,8 @@ class EquilibriumStructure(Structure):
 
         edges = np.concatenate((edges_trail, edges_deviation))
 
-        trails = trails_from_edges(nodes, supports, edges_trail)
-        data = sequence_data(trails, edges, len(nodes), len(edges_trail))
+        trails = build_trails(nodes, supports, edges_trail)
+        data = build_sequences(trails, edges, len(nodes), len(edges_trail))
 
         self.nodes = jnp.asarray(nodes)
         self.supports = jnp.asarray(supports)

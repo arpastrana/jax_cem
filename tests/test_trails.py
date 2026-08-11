@@ -4,8 +4,8 @@ from converters import structure_from_topology
 from pytest_lazy_fixtures import lf
 
 from jax_cem.datastructures import align_trails
+from jax_cem.datastructures import build_trails
 from jax_cem.datastructures import sequences_from_trails
-from jax_cem.datastructures import trails_from_edges
 
 # ==============================================================================
 # Helpers
@@ -69,7 +69,7 @@ def test_trail_search_reproduces_the_reference_sequences(topology):
     reference = reference_sequences(topology)
     nodes, supports, edges_trail, _ = trail_inputs(topology)
 
-    trails = trails_from_edges(nodes, supports, edges_trail)
+    trails = build_trails(nodes, supports, edges_trail)
 
     # the shift of a trail is a choice the diagram made, so read it off it
     shifts = [int(np.nonzero(reference == trail[0])[0][0]) for trail in trails]
@@ -86,7 +86,7 @@ def test_every_node_lands_on_exactly_one_trail(braced_tower_2d):
     The trails partition the nodes.
     """
     nodes, supports, edges_trail, _ = trail_inputs(braced_tower_2d)
-    trails = trails_from_edges(nodes, supports, edges_trail)
+    trails = build_trails(nodes, supports, edges_trail)
 
     visited = [node for trail in trails for node in trail]
     assert sorted(visited) == sorted(int(node) for node in nodes)
@@ -97,7 +97,7 @@ def test_a_trail_runs_from_origin_to_support(braced_tower_2d):
     The last node of every trail is its support.
     """
     nodes, supports, edges_trail, _ = trail_inputs(braced_tower_2d)
-    trails = trails_from_edges(nodes, supports, edges_trail)
+    trails = build_trails(nodes, supports, edges_trail)
 
     assert sorted(trail[-1] for trail in trails) == sorted(int(s) for s in supports)
 
@@ -186,7 +186,7 @@ def test_a_node_off_every_trail_is_rejected():
     edges_trail = np.array([[0, 1]])
 
     with pytest.raises(ValueError, match="do not lie on a trail"):
-        trails_from_edges(nodes, supports, edges_trail)
+        build_trails(nodes, supports, edges_trail)
 
 
 def test_a_branching_trail_is_rejected():
@@ -198,7 +198,7 @@ def test_a_branching_trail_is_rejected():
     edges_trail = np.array([[0, 1], [1, 2], [0, 2]])
 
     with pytest.raises(ValueError, match="ambiguous"):
-        trails_from_edges(nodes, supports, edges_trail)
+        build_trails(nodes, supports, edges_trail)
 
 
 def test_no_supports_is_rejected():
@@ -206,7 +206,7 @@ def test_no_supports_is_rejected():
     Trails grow from supports, so there must be one.
     """
     with pytest.raises(ValueError, match="No supports"):
-        trails_from_edges(np.array([0, 1]), np.empty(0, dtype=int), np.array([[0, 1]]))
+        build_trails(np.array([0, 1]), np.empty(0, dtype=int), np.array([[0, 1]]))
 
 
 def test_no_trail_edges_is_rejected():
@@ -214,7 +214,7 @@ def test_no_trail_edges_is_rejected():
     A structure of deviation edges alone has no trail to step through.
     """
     with pytest.raises(ValueError, match="No trail edges"):
-        trails_from_edges(np.array([0, 1]), np.array([1]), np.empty((0, 2), dtype=int))
+        build_trails(np.array([0, 1]), np.array([1]), np.empty((0, 2), dtype=int))
 
 
 def test_a_self_looping_trail_edge_is_rejected():
@@ -222,7 +222,7 @@ def test_a_self_looping_trail_edge_is_rejected():
     A trail edge must join two distinct nodes.
     """
     with pytest.raises(ValueError, match="self-loop"):
-        trails_from_edges(np.array([0, 1]), np.array([1]), np.array([[0, 0], [0, 1]]))
+        build_trails(np.array([0, 1]), np.array([1]), np.array([[0, 0], [0, 1]]))
 
 
 def test_mismatched_shifts_are_rejected(braced_tower_2d):
@@ -230,7 +230,7 @@ def test_mismatched_shifts_are_rejected(braced_tower_2d):
     One shift per trail, no more and no fewer.
     """
     nodes, supports, edges_trail, _ = trail_inputs(braced_tower_2d)
-    trails = trails_from_edges(nodes, supports, edges_trail)
+    trails = build_trails(nodes, supports, edges_trail)
 
     with pytest.raises(ValueError, match="they must match"):
         sequences_from_trails(trails, np.array([0]))
@@ -241,7 +241,7 @@ def test_a_negative_shift_is_rejected(braced_tower_2d):
     A trail cannot start before the first sequence.
     """
     nodes, supports, edges_trail, _ = trail_inputs(braced_tower_2d)
-    trails = trails_from_edges(nodes, supports, edges_trail)
+    trails = build_trails(nodes, supports, edges_trail)
 
     with pytest.raises(ValueError, match="before the first sequence"):
         sequences_from_trails(trails, np.array([-1, 0]))

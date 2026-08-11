@@ -9,10 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `jax_cem.datastructures.sequences`, holding `SequenceData`, `build_sequences`,
+  and `sequences_from_trails`, which `jax_cem.datastructures.trails` used to carry.
+  The trail search orders the nodes; laying that order out into the sequences the
+  equilibrium scan steps through is a separate concern, and only the second one
+  depends on the shifts.
 - Added `jax_cem.datastructures.trails`, a native trail search that replaces the
-  reliance on `TopologyDiagram.build_trails`. `trails_from_edges` orders the nodes of
-  a structure into trails and `sequences_from_trails` lays those trails out into
-  sequences.
+  reliance on `TopologyDiagram.build_trails`. `build_trails` takes the name of the
+  method it stands in for, and orders the nodes of a structure into trails;
+  `build_sequences` derives everything that the layout of those trails settles.
 - Added `align_trails`, which starts every trail at the sequence of the node it
   deviates to and returns a new structure, mirroring `shift_trail` on a topology
   diagram. One pass makes an origin node's deviation edges direct without making
@@ -39,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by running the suite under jaxtyping's import hook with a runtime typechecker,
   which turns each annotation into a check.
 - Changed the fields of `EquilibriumStructure` from NumPy to JAX arrays. The trail
-  search still computes with NumPy and `sequence_data` converts once on the way out,
+  search still computes with NumPy and `build_sequences` converts once on the way out,
   so the shipped structure is device-resident.
 - Changed `EquilibriumStructure` to require an edge array of node key pairs. It used
   to reshape whatever it was given, which let a flat array through and made the
