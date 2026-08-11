@@ -16,8 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which edges those are follows from the sequences, so deriving it means it cannot
   fall out of step with a trail that shifts.
 - Added `EquilibriumModel.nodes_deviation`, which accumulates the deviation force at
-  every node, and `EquilibriumModel.nodes_residual`, which scatters the residual of
-  every sequence into the nodes it belongs to.
+  every node, and `EquilibriumModel.nodes_residual`, which assembles the residual at
+  every node from the edge forces and the loads.
 - Added an edge range check to `EquilibriumStructure.__check_init__`. `scipy` used to
   reject a negative node key on the caller's behalf while building the connectivity
   matrix; without the matrix a negative key would wrap and the accumulation would drop
@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `tests/test_kernel.py`, which pins the direction of a deviation force, the
   padding of a sequence a trail does not reach, and the edge range check. The frozen
   baselines catch a swapped force direction only indirectly.
+- Added `tests/test_compas_xcheck.py`, which solves each fixture with
+  `compas_cem.equilibrium.static_equilibrium` at the same iteration limit and
+  convergence threshold and compares every node and every edge, giving the marker a
+  test to carry. The frozen baselines record one setting; a live solver also covers
+  the path between the settings. Verified to bite by swapping the two scatters of the
+  deviation accumulation, which fails eleven of the thirty.
+- Added two equilibrium invariants, to `tests/test_kernel.py` over structures built
+  without COMPAS CEM and to `tests/test_compas_xcheck.py` over the six fixtures: the
+  residual vanishes at every free node, and the residuals sum to the applied load.
+  Neither calls a second solver. The first measures convergence, since the residual is
+  assembled from the edge forces rather than carried out of the sweep: on the braced
+  tower it reads 1.9 after one pass and 4e-9 once converged. The second holds to
+  machine precision at any iteration count, because the internal forces cancel in
+  pairs whether or not the sweep has settled, so it checks the bookkeeping instead.
 - Added `jax_cem.datastructures.sequences`, holding `SequenceData`, `build_sequences`,
   and `sequences_from_trails`, which `jax_cem.datastructures.trails` used to carry.
   The trail search orders the nodes; laying that order out into the sequences the
@@ -74,9 +88,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed `EquilibriumState` to the Formax field set: `residuals` in place of
   `reactions` and defined at every node rather than only at the supports, an added
   `vectors`, and `forces` and `lengths` shaped `"edges"` rather than `"edges 1"`. The
-  values do not move: COMPAS CEM stores the residual, unnegated, under a reaction's
-  name, which is what the frozen baselines were captured from. The container stays a
-  named tuple where Formax uses an equinox module.
+  container stays a named tuple where Formax uses an equinox module.
+- Changed `EquilibriumState.residuals` to the quantity Formax and `jax_fdm` mean by
+  the name: the load at a node plus the forces the edges meeting it exert, which is
+  zero at a free node in equilibrium. It used to hold the trail residual the sweep
+  carries, which is nonzero almost everywhere and is the negation of a residual where
+  the two coincide, at a support. Reading it as a residual is what made the earlier
+  claim here that COMPAS CEM stores a residual under a reaction's name; COMPAS CEM
+  stores a reaction. The frozen baselines are unmoved, since the converter that writes
+  them now negates.
+- Changed the trail residual to the name `residuals_trail`, on
+  `EquilibriumSequenceState` and throughout the kernel, so that `residuals` means one
+  thing across the Formax libraries. The trail residual stays off `EquilibriumState`:
+  the force in a trail edge and the vector of that edge already hold it.
+- Changed `deviation_vector` to `resultant_vector`, which takes the edge set it
+  accumulates over. Nothing in it was specific to a deviation edge, and the nodal
+  residual needs the same accumulation over every edge.
 - Changed `ParameterState.forces` to cover the deviation block alone, shaped
   `"edges_deviation"`. The trail entries were overwritten on every call and never read.
 - Changed `vector_length` to return a scalar rather than a one-element vector, which

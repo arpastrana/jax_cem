@@ -141,6 +141,10 @@ algorithm against the frozen baselines, on modern dependencies, before phase 2
 rewrites trail sequencing. That run is the only reference the rewrite can be
 diffed against.
 
+Phases 1 through 4 are closed. Phase 2 kept the plane sentinel and auxiliary trails,
+which are the same deferral rather than two: both are authoring decisions with nowhere
+to live until the constructor settles.
+
 ### Phase 1 — Packaging and CI
 
 Remove every COMPAS trace outside the source tree.
@@ -164,7 +168,7 @@ The two diagram constructors could not stay: they made `compas_cem` a hard impor
 
 The topology fixtures stay, because that is how they were authored, and the
 converters they need now live in `tests/converters.py` rather than in the library.
-Phase 2 replaces them with the native array constructor and deletes the module.
+Phase 6 replaces them with the native array constructor and deletes the module.
 
 `compas_cem` is a dev dependency pinned to git. Its COMPAS 2.x and numpy 2 support
 is on `main` but unreleased; the published 0.8.6 still requires `compas==1.17.10`,
@@ -214,9 +218,10 @@ Until then, the caller supplies the augmented topology, and a structure whose no
 not all reach a support is rejected with a message naming them.
 
 Whether a deviation edge is direct or indirect is settled by the sequences, so it is
-derived and never supplied, as it is in COMPAS CEM. The field survives this phase and
-disappears in the reshape, where ordering the edges as
-`[trail | deviation_direct | deviation_indirect]` turns the distinction into a slice.
+derived and never supplied, as it is in COMPAS CEM. It is not stored either: the field
+became the `is_edge_deviation_direct` property, which cannot fall out of step with a
+trail that shifts. The edge order it would otherwise have keyed stays fixed, for the
+reason recorded above.
 
 The graph operations are gathers and scatters, not matrix products. Edge vectors are
 `xyz[edges[:, 1]] - xyz[edges[:, 0]]`, and the deviation force at a node is a
@@ -234,15 +239,23 @@ touch. The accumulation half is exact on the six fixtures but reduces in a diffe
 order than a dot product, so in general it agrees to rounding, which double precision
 keeps far below the tolerance the baselines use.
 
-The six topology fixtures are ported to the array constructor in the same phase,
-which is what keeps the suite green across it and gives the constructor its first
-real exercise. `compas_cem` drops out of the dev group here and reappears only as an
-optional extra, for the examples and the `compas_xcheck` tests.
-
 `EquilibriumState` adopts the Formax field set: `residuals` rather than `reactions`
 (a reaction is the negation of a residual, and storing one of the two removes the
 chance of disagreement), an added `vectors`, and `forces` and `lengths` shaped
 `"edges"` rather than `"edges 1"`.
+
+Adopting the name is not adopting the quantity, and phase 4 found the field still
+holding the old one. CEM propagates a force down a trail — what the load and the
+deviation forces at a node leave for its outgoing trail edge to carry — and both the
+CEM literature and COMPAS CEM call that a residual. Formax and `jax_fdm` mean the
+node's out-of-balance force, which is zero at a free node in equilibrium. The two
+coincide only at a support, and even there they differ in sign.
+
+So `residuals` is now assembled from the edge forces and the loads, over the whole
+edge set, and the trail quantity is `residuals_trail`. The trail quantity is not
+stored on the state: the force in a trail edge and the vector of that edge already
+hold it. Assembling rather than scattering is what lets a free node report that the
+sweep left it out of equilibrium, which is the measure the iteration is driving down.
 
 The sentinel that encodes a plane-driven trail edge as `length == 0.0` is deferred
 rather than fixed. Whether a trail edge is driven by a length or by a plane is a fact
@@ -251,11 +264,11 @@ structure — but nothing derives it, which means a fifth constructor argument. 
 the same question as auxiliary trails and the shifts before them: an authoring decision
 with nowhere to live. It waits for the constructor to settle.
 
-The six topology fixtures are **not** ported to the array constructor in this phase,
-which is a change from the plan above. `compas_cem` stays a dev dependency and
-`tests/converters.py` stays with it, because the frozen baselines it produces are the
-only evidence that the rewritten kernel computes what the old one did. The port waits
-until the rewrite has landed in full.
+The six topology fixtures are **not** ported to the array constructor here, which is a
+change from an earlier draft of this phase. They stay COMPAS CEM diagrams,
+`compas_cem` stays a dev dependency, and `tests/converters.py` stays with it, because
+that is what lets the rewritten kernel be measured against the one it replaces. The
+port moves to phase 6.
 
 ### Phase 3 — Typing
 
@@ -297,11 +310,33 @@ returned.
 The six expected-result dictionaries in `test_equilibrium.py` are already literal
 Python and survive COMPAS removal untouched; they are the frozen baseline that
 phases 1 and 2 are each measured against. The fixtures that build them are ported in
-phase 2.
+phase 6.
 
 This phase adds what the suite has never had: `jit`, `vmap`, and gradient tests, a
 trail-sequencing unit test independent of equilibrium, and the `compas_xcheck` tests
-that compare against `compas_cem.equilibrium.static_equilibrium`.
+that solve each fixture with `compas_cem.equilibrium.static_equilibrium` and compare
+every node and every edge against it.
+
+A frozen baseline records one setting; a live solver also covers the path that reaches
+it, so the two run at a matching iteration limit and convergence threshold. The
+cross-check was verified to bite rather than to pass vacuously, by swapping the two
+scatters of the deviation accumulation and confirming which comparisons fail.
+
+Two invariants have no COMPAS CEM counterpart, and asking whether they held is what
+exposed that `EquilibriumState.residuals` was still the trail quantity rather than the
+Formax one. Both are stated on the corrected field: the residual vanishes at every free
+node, and the residuals sum to the applied load.
+
+They fail in different ways, which is why both are kept. The free-node check measures
+convergence, because the residual is assembled from the edge forces rather than read
+off the sweep; the sum holds to machine precision at any iteration count, because the
+internal forces cancel in pairs whether or not the sweep has settled, so what it checks
+is the bookkeeping between the sweep, the edge forces, and the loads.
+
+They call no solver, so they belong with the kernel tests rather than the cross-checks,
+and they run in both places: over structures built natively, which is where they stay,
+and over the six fixtures, which are the richest ones available until phase 6 ports
+them.
 
 ### Phase 5 — Examples
 
@@ -312,7 +347,19 @@ Ported to the native API: `02_braced_tower_2d` (it has a test baseline),
 `optimization_basic.py` imports both `jaxopt` and `optax`; the port picks one, and
 `optimistix` is where `smax` and `jax_fdm` both landed.
 
-### Phase 6 — Documentation and metadata
+### Phase 6 — Fixtures, documentation, and metadata
+
+The six topology fixtures are ported to the array constructor, which deletes
+`tests/converters.py` and gives the constructor its first exercise outside the unit
+tests. This is the earliest phase that can hold it. The converters are what the phase 5
+examples are ported against, and the frozen baselines are the measure that phases 2 and
+5 are each held to, so moving the port earlier would remove the evidence while it is
+still being read.
+
+`compas_cem` then leaves the dev group and returns as an optional extra, for the
+examples and the `compas_xcheck` tests. It does not leave the repository: those tests
+are the standing check that the rewrite computes what COMPAS CEM computes, and they
+need a solver to call.
 
 A real `Unreleased` entry in `CHANGELOG.md`, including the note that
 `deviation_edges` has changed meaning from a float mask to an edge array.

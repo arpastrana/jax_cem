@@ -35,6 +35,48 @@ def uneven_trails():
     )
 
 
+def crossing_trails():
+    """
+    Uneven trails joined by one direct and one indirect deviation edge.
+    """
+    return EquilibriumStructure(
+        nodes=np.arange(5),
+        supports=np.array([2, 4]),
+        edges_trail=np.array([[0, 1], [1, 2], [3, 4]]),
+        edges_deviation=np.array([[0, 3], [1, 3]]),
+    )
+
+
+def parameters(structure):
+    """
+    A downward unit load at every node, with the origin nodes spread along x.
+
+    Notes
+    -----
+    A support takes a zero trail length, since no trail edge leaves it. The
+    origins are held apart so that no deviation edge starts out with zero length.
+    """
+    num_nodes = int(structure.num_nodes)
+
+    origins = np.asarray(structure.origin_nodes)
+    xyz = np.zeros((num_nodes, 3))
+    xyz[origins, 0] = np.arange(origins.size)
+
+    lengths = np.ones((num_nodes, 1))
+    lengths[np.asarray(structure.supports)] = 0.0
+
+    return ParameterState(
+        xyz=jnp.asarray(xyz),
+        loads=jnp.tile(jnp.array([0.0, -1.0, 0.0]), (num_nodes, 1)),
+        forces=jnp.full(int(structure.num_edges_deviation), 0.5),
+        lengths=jnp.asarray(lengths),
+        planes=jnp.zeros((num_nodes, 6)),
+    )
+
+
+STRUCTURES = [two_trails, uneven_trails, crossing_trails]
+
+
 # ==============================================================================
 # Tests - Deviation forces
 # ==============================================================================
@@ -74,6 +116,51 @@ def test_an_indirect_deviation_edge_is_left_out_of_the_first_pass():
     assert direct.shape == (structure.num_edges_deviation,)
     assert direct.dtype == bool
     assert direct.all()
+
+
+# ==============================================================================
+# Tests - Nodal equilibrium
+# ==============================================================================
+
+
+@pytest.mark.parametrize("build", STRUCTURES, ids=lambda build: build.__name__)
+def test_the_free_nodes_are_in_equilibrium(build):
+    """
+    The residual vanishes at every node no support holds.
+
+    Notes
+    -----
+    The residual is assembled from the edge forces rather than carried out of the
+    sweep, so this closes the loop on the whole kernel: the trail edge forces it
+    recovers, the deviation forces it applies, and the positions it lands on have
+    to balance the loads node by node.
+    """
+    structure = build()
+    state = EquilibriumModel(tmax=100)(parameters(structure), structure)
+
+    nodes = np.arange(int(structure.num_nodes))
+    free = np.setdiff1d(nodes, np.asarray(structure.supports))
+
+    assert np.allclose(np.asarray(state.residuals)[free], 0.0, atol=1e-6)
+
+
+@pytest.mark.parametrize("build", STRUCTURES, ids=lambda build: build.__name__)
+def test_the_structure_carries_its_loads_to_the_supports(build):
+    """
+    The residuals sum to the applied load, so the supports absorb all of it.
+
+    Notes
+    -----
+    The internal forces cancel in pairs over the whole structure, which leaves
+    the loads. No single step of the solver enforces that sum.
+    """
+    structure = build()
+    state = EquilibriumModel(tmax=100)(parameters(structure), structure)
+
+    residuals = np.asarray(state.residuals)
+    loads = np.asarray(state.loads)
+
+    assert np.allclose(residuals.sum(axis=0), loads.sum(axis=0), atol=1e-6)
 
 
 # ==============================================================================
