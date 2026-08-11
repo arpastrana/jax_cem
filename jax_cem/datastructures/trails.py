@@ -27,10 +27,10 @@ class SequenceData(NamedTuple):
     Everything about a structure that the layout of its trails settles.
     """
 
-    sequences: Int[np.ndarray, "sequences trails"]
-    origin_nodes: Int[np.ndarray, "trails"]
-    sequences_edges: Int[np.ndarray, "sequences_edges trails"]
-    sequences_edges_indices: Int[np.ndarray, "sequences_edges_flat"]
+    sequences: Int[Array, "sequences trails"]
+    origin_nodes: Int[Array, "trails"]
+    sequences_edges: Int[Array, "sequences_edges trails"]
+    sequences_edges_indices: Int[Array, "edges_trail"]
     edges_deviation_direct: Float[Array, "edges"]
 
 
@@ -146,6 +146,9 @@ def sequence_data(
     Grouped into one function because a shift changes all of it at once, so the
     constructor and any transform that shifts a trail cannot derive one part
     without the rest.
+
+    The index data is computed with NumPy and converted once here, so what the
+    structure stores is device-resident.
     """
     sequences, origin_nodes = sequences_from_trails(trails, shifts)
 
@@ -178,10 +181,10 @@ def sequence_data(
     is_direct = sequence_of[edges[:, 0]] == sequence_of[edges[:, 1]]
 
     return SequenceData(
-        sequences=sequences,
-        origin_nodes=origin_nodes,
-        sequences_edges=sequences_edges,
-        sequences_edges_indices=indices,
+        sequences=jnp.asarray(sequences),
+        origin_nodes=jnp.asarray(origin_nodes),
+        sequences_edges=jnp.asarray(sequences_edges),
+        sequences_edges_indices=jnp.asarray(indices),
         edges_deviation_direct=jnp.asarray(
             np.logical_and(is_deviation, is_direct).astype(float),
         ),

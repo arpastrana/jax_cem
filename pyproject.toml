@@ -56,6 +56,7 @@ dev = [
     "ruff==0.15.20",
     "compas_cem>=0.8.6",
     "pytest-lazy-fixtures",
+    "beartype>=0.19",
 ]
 # Exact pin: pyright basic-mode default diagnostics can shift between releases.
 typecheck = ["pyright==1.1.411"]

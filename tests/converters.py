@@ -38,9 +38,9 @@ def structure_from_topology(topology):
 
     return EquilibriumStructure(
         nodes=nodes,
-        supports=np.asarray(supports).astype(int),
-        edges_trail=np.asarray(edges_trail).astype(int),
-        edges_deviation=np.asarray(edges_deviation).astype(int),
+        supports=np.asarray(supports, dtype=int),
+        edges_trail=np.asarray(edges_trail, dtype=int).reshape(-1, 2),
+        edges_deviation=np.asarray(edges_deviation, dtype=int).reshape(-1, 2),
     )
 
 
@@ -58,7 +58,7 @@ def parameters_from_topology(topology, structure):
     loads = jnp.asarray([topology.node_load(node) for node in nodes])
     xyz = jnp.asarray([topology.node_coordinates(node) for node in nodes])
 
-    forces = np.zeros((structure.number_of_edges(), 1))
+    forces = np.zeros((structure.num_edges, 1))
     edge_index = structure.edge_index
     for edge in topology.edges():
         u, v = edge

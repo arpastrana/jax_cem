@@ -1,10 +1,10 @@
-from typing import Tuple
-
-import jax
 import jax.numpy as jnp
 from equinox.internal import while_loop
 from jax import vmap
 from jax.lax import scan
+from jaxtyping import Array
+from jaxtyping import Float
+from jaxtyping import Int
 
 from jax_cem.datastructures import EquilibriumStructure
 from jax_cem.equilibrium import EquilibriumSequenceState
@@ -46,22 +46,26 @@ class EquilibriumModel:
 
         Parameters
         ----------
-        parameters : `jax_cem.parameters.ParameterState`
+        params :
             The parameters of the equilibrium model.
-        structure : `jax_cem.datastructures.EquilibriumStructure`
+        structure :
             A structure.
 
         Returns
         -------
-        eq_state: `jax_cem.equilibrium.EquilibriumState`
+        eq_state :
             An equilibrium state.
+
+        Notes
+        -----
+        The node positions carry a dummy last row, which a shifted sequence
+        indexes with ``-1`` while it waits for its trail to start.
 
         Assumptions
         -----------
         - No shape dependent loads exist in the structure.
         """
-        # NOTE: Add dummy last row to consider shifted sequences
-        xyz = jnp.zeros((structure.number_of_nodes() + 1, 3))
+        xyz = jnp.zeros((structure.num_nodes + 1, 3))
         data = self.equilibrium(params, structure, xyz)
 
         if self.tmax > 1:
@@ -85,7 +89,11 @@ class EquilibriumModel:
         self,
         params: ParameterState,
         structure: EquilibriumStructure,
-        data: Tuple[jax.Array, jax.Array, jax.Array],
+        data: tuple[
+            Float[Array, "nodes_padded 3"],
+            Float[Array, "sequences trails 3"],
+            Float[Array, "sequences trails"],
+        ],
     ) -> EquilibriumState:
         """
         Assemble an equilibrium state.
@@ -98,7 +106,7 @@ class EquilibriumModel:
         xyz = xyz[:-1]
 
         # Reaction forces
-        reactions = jnp.zeros((structure.number_of_nodes(), 3))
+        reactions = jnp.zeros((structure.num_nodes, 3))
         reactions = reactions.at[structure.supports, :].set(residuals[-1, :])
 
         # Edge forces
@@ -131,8 +139,12 @@ class EquilibriumModel:
         self,
         params: ParameterState,
         structure: EquilibriumStructure,
-        xyz: jax.Array,
-    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+        xyz: Float[Array, "nodes_padded 3"],
+    ) -> tuple[
+        Float[Array, "nodes_padded 3"],
+        Float[Array, "sequences trails 3"],
+        Float[Array, "sequences trails"],
+    ]:
         """
         Calculate static equilibrium on a structure.
         """
@@ -142,11 +154,15 @@ class EquilibriumModel:
         self,
         params: ParameterState,
         structure: EquilibriumStructure,
-        xyz: jax.Array,
+        xyz: Float[Array, "nodes_padded 3"],
         tmax: int,
         eta: float,
         scale: float,
-    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+    ) -> tuple[
+        Float[Array, "nodes_padded 3"],
+        Float[Array, "sequences trails 3"],
+        Float[Array, "sequences trails"],
+    ]:
         """
         Calculate static equilibrium on a structure iteratively.
         """
@@ -198,9 +214,13 @@ class EquilibriumModel:
         self,
         params: ParameterState,
         structure: EquilibriumStructure,
-        xyz: jax.Array,
+        xyz: Float[Array, "nodes_padded 3"],
         use_indirect: bool,
-    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+    ) -> tuple[
+        Float[Array, "nodes_padded 3"],
+        Float[Array, "sequences trails 3"],
+        Float[Array, "sequences trails"],
+    ]:
         """
         Calculates equilibrium on all the sequences of a structure.
         """
@@ -210,7 +230,7 @@ class EquilibriumModel:
             Creates an initial scan state.
             """
             xyz_seq = params.xyz[structure.origin_nodes, :]
-            residuals_seq = jnp.zeros((structure.number_of_trails(), 3))
+            residuals_seq = jnp.zeros((structure.num_trails, 3))
 
             return xyz, xyz_seq, residuals_seq
 
@@ -254,10 +274,10 @@ class EquilibriumModel:
         self,
         params: ParameterState,
         structure: EquilibriumStructure,
-        sequence: jax.Array,
-        xyz: jax.Array,
-        xyz_seq: jax.Array,
-        residuals_seq: jax.Array,
+        sequence: Int[Array, "trails"],
+        xyz: Float[Array, "nodes_padded 3"],
+        xyz_seq: Float[Array, "trails 3"],
+        residuals_seq: Float[Array, "trails 3"],
         use_indirect: bool,
     ) -> EquilibriumSequenceState:
         """
@@ -310,19 +330,25 @@ class EquilibriumModel:
         self,
         params: ParameterState,
         structure: EquilibriumStructure,
-        sequence: jax.Array,
-        xyz: jax.Array,
-        residuals: jax.Array,
+        sequence: Int[Array, "trails"],
+        xyz: Float[Array, "nodes 3"],
+        residuals: Float[Array, "trails 3"],
         use_indirect: bool,
-    ) -> jax.Array:
+    ) -> Float[Array, "trails 3"]:
         """
         Calculate static equilibrium at one node of a structure. Vectorized.
+
+        Notes
+        -----
+        Only deviation edges reach the equilibrium of a node, and the edges put
+        them in the last block, so the vectors cover that block alone.
         """
         node_equilibrium_vmap = vmap(
             self.node_equilibrium,
             in_axes=(None, None, 0, 0, None, None),
         )
-        vectors = edges_vector(xyz, structure.connectivity)
+        connectivity = structure.connectivity[structure.num_edges_trail :]
+        vectors = edges_vector(xyz, connectivity)
         vectors = vmap(vector_normalized)(vectors)
 
         return node_equilibrium_vmap(
@@ -338,22 +364,28 @@ class EquilibriumModel:
         self,
         params: ParameterState,
         structure: EquilibriumStructure,
-        index: jax.Array,
-        residual: jax.Array,
-        vectors: jax.Array,
+        index: Int[Array, ""],
+        residual: Float[Array, "3"],
+        vectors: Float[Array, "edges_deviation 3"],
         use_indirect: bool,
-    ) -> jax.Array:
+    ) -> Float[Array, "3"]:
         """
         Calculate static equilibrium at one node of a structure.
+
+        Notes
+        -----
+        The incidence of a node is the negated connectivity, since the
+        connectivity signs an edge from its tail while the deviation force acts
+        from the node.
         """
         load = params.loads[index, :]
-        # The incidence of a node is the negated connectivity: the connectivity
-        # signs an edge from its tail, the deviation force acts from the node.
-        incidence = -structure.connectivity[:, index] * structure.deviation_edges
+        start = structure.num_edges_trail
 
-        forces = jnp.ravel(params.forces) * incidence
+        incidence = -structure.connectivity[start:, index]
+
+        forces = jnp.ravel(params.forces)[start:] * incidence
         if not use_indirect:
-            forces = forces * structure.edges_deviation_direct
+            forces = forces * structure.edges_deviation_direct[start:]
 
         deviation = deviation_vector(forces, vectors)
 
@@ -365,10 +397,10 @@ class EquilibriumModel:
 
     def nodes_position(
         self,
-        xyz_seq: jax.Array,
-        residuals: jax.Array,
-        lengths: jax.Array,
-    ) -> jax.Array:
+        xyz_seq: Float[Array, "trails 3"],
+        residuals: Float[Array, "trails 3"],
+        lengths: Float[Array, "trails"],
+    ) -> Float[Array, "trails 3"]:
         """
         Calculate the position of the next sequence of nodes of a structure.
         """
@@ -376,10 +408,10 @@ class EquilibriumModel:
 
     def node_position(
         self,
-        xyz: jax.Array,
-        residual: jax.Array,
-        length: jax.Array,
-    ) -> jax.Array:
+        xyz: Float[Array, "3"],
+        residual: Float[Array, "3"],
+        length: Float[Array, ""],
+    ) -> Float[Array, "3"]:
         """
         Calculate the position of the next node on a trail of a structure.
         """
@@ -392,10 +424,10 @@ class EquilibriumModel:
     def nodes_length_plane(
         self,
         params: ParameterState,
-        sequence: jax.Array,
-        xyz_seq: jax.Array,
-        residuals: jax.Array,
-    ) -> jax.Array:
+        sequence: Int[Array, "trails"],
+        xyz_seq: Float[Array, "trails 3"],
+        residuals: Float[Array, "trails 3"],
+    ) -> Float[Array, "trails"]:
         """
         Calculate the outgoing edge lengths in a sequence. Vectorized.
         """
@@ -406,10 +438,10 @@ class EquilibriumModel:
     def node_length_plane(
         self,
         params: ParameterState,
-        index: jax.Array,
-        xyz: jax.Array,
-        residual: jax.Array,
-    ) -> jax.Array:
+        index: Int[Array, ""],
+        xyz: Float[Array, "3"],
+        residual: Float[Array, "3"],
+    ) -> Float[Array, ""]:
         """
         Compute the outgoing length from a node.
 
@@ -447,8 +479,8 @@ class EquilibriumModel:
     def edges_length(
         self,
         structure: EquilibriumStructure,
-        xyz: jax.Array,
-    ) -> jax.Array:
+        xyz: Float[Array, "nodes 3"],
+    ) -> Float[Array, "edges 1"]:
         """
         The length of the edges of a structure.
         """
@@ -463,12 +495,18 @@ class EquilibriumModel:
     def edges_force(
         self,
         structure: EquilibriumStructure,
-        residuals: jax.Array,
-        lengths: jax.Array,
-        forces: jax.Array,
-    ) -> jax.Array:
+        residuals: Float[Array, "sequences_edges trails 3"],
+        lengths: Float[Array, "sequences_edges trails"],
+        forces: Float[Array, "edges 1"],
+    ) -> Float[Array, "edges 1"]:
         """
         The forces in the edges of a structure.
+
+        Notes
+        -----
+        A sequence pair that no trail spans holds a padding entry, so the flat
+        residuals are gathered down to the trail edges before they are scattered
+        into the edge forces the parameters carry.
         """
         trail_forces = self.trails_force(residuals, lengths)
 
@@ -483,11 +521,16 @@ class EquilibriumModel:
 
     def trails_force(
         self,
-        residuals: jax.Array,
-        lengths: jax.Array,
-    ) -> jax.Array:
+        residuals: Float[Array, "sequences_edges trails 3"],
+        lengths: Float[Array, "sequences_edges trails"],
+    ) -> Float[Array, "sequences_edges*trails 1"]:
         """
         The force in the trail edges of a structure.
+
+        Notes
+        -----
+        The force takes the sign of the length of the trail edge it passes
+        through, which is negative in compression.
         """
         residuals = jnp.concatenate(residuals)
         forces = vmap(trail_force)(residuals)
@@ -503,26 +546,16 @@ class EquilibriumModel:
 
 
 def deviation_vector(
-    forces: jax.Array,
-    vectors: jax.Array,
-) -> jax.Array:
+    forces: Float[Array, "edges_deviation"],
+    vectors: Float[Array, "edges_deviation 3"],
+) -> Float[Array, "3"]:
     """
     Calculate the resultant deviation vector incoming to a node.
     """
     return forces.T @ vectors
 
 
-def trail_length(
-    trail_lengths: jax.Array,
-    incidence: jax.Array,
-) -> jax.Array:
-    """
-    Get the length of the next trail edge outgoing from a node.
-    """
-    return incidence * trail_lengths  # (num_edges, num_nodes)
-
-
-def trail_force(residual: jax.Array) -> jax.Array:
+def trail_force(residual: Float[Array, "3"]) -> Float[Array, "1"]:
     """
     The force passing through a trail edge.
     """
@@ -530,10 +563,10 @@ def trail_force(residual: jax.Array) -> jax.Array:
 
 
 def residual_vector(
-    residual: jax.Array,
-    deviation: jax.Array,
-    load: jax.Array,
-) -> jax.Array:
+    residual: Float[Array, "3"],
+    deviation: Float[Array, "3"],
+    load: Float[Array, "3"],
+) -> Float[Array, "3"]:
     """
     The updated residual vector at a node.
     """
@@ -541,10 +574,10 @@ def residual_vector(
 
 
 def position_vector(
-    position: jax.Array,
-    residual: jax.Array,
-    trail_length: jax.Array,
-) -> jax.Array:
+    position: Float[Array, "3"],
+    residual: Float[Array, "3"],
+    trail_length: Float[Array, ""],
+) -> Float[Array, "3"]:
     """
     The position of the next node on a trail.
     """
@@ -552,9 +585,9 @@ def position_vector(
 
 
 def edges_vector(
-    xyz: jax.Array,
-    connectivity: jax.Array,
-) -> jax.Array:
+    xyz: Float[Array, "nodes 3"],
+    connectivity: Float[Array, "edges nodes"],
+) -> Float[Array, "edges 3"]:
     """
     The edge vectors of the graph.
     """

@@ -44,9 +44,11 @@ indexes it, and any source with its own edge order — JSON, a mesh, a COMPAS CE
 diagram — is permuted into it at the boundary.
 
 Two consequences reach past the constructor. Trail and deviation edges occupy
-contiguous blocks, so the masks the kernel currently multiplies through
-(`deviation_edges`, `indirect_edges`) become slices, and `indirect_edges` shrinks
-to a mask over the deviation block alone. Trail-edge forces are outputs, recovered
+contiguous blocks, so the masks the kernel used to multiply through become slices.
+`deviation_edges` is gone: the node equilibrium slices the deviation rows out of the
+connectivity, which also keeps the trail rows out of the edge vector product.
+`edges_deviation_direct` still spans every edge and shrinks to the deviation block in
+the reshape. Trail-edge forces are outputs, recovered
 from the residuals, so `ParameterState.forces` covers only the deviation block;
 the trail entries the old parameter array carried were overwritten on every call
 and never read.
@@ -72,6 +74,21 @@ constructor. This follows `smax`, whose shipped containers are all-JAX and whose
 NumPy annotations appear only on construction helpers, and it matches the Formax
 contract. `jax_fdm` keeps key arrays as NumPy on the container; `jax_cem` does not
 follow it here.
+
+### Batching goes through `vmap`
+
+A structure is built one at a time and batched by stacking the modules into a
+pytree, which `vmap` then maps over. The constructor runs the trail search on the
+host, in Python, over dictionaries, so it cannot be traced and cannot be `vmap`-ed;
+a batched array reaching it is rejected rather than reshaped. Stacking does not run
+the constructor again, because equinox rebuilds a module from its leaves.
+
+The shape annotations describe one structure, which is the view `vmap` presents to
+the kernel. They do not hold on a stacked structure read outside `vmap`, and that is
+the JAX contract rather than a gap. What is a gap is a stacked structure that
+answers wrongly instead of failing, so the counts read the trailing axes and `edges`
+concatenates on the edge axis. Before that, `number_of_nodes` on a stacked structure
+returned the size of the batch.
 
 ### License
 
@@ -219,15 +236,38 @@ parameters.
 
 ### Phase 3 — Typing
 
-jaxtyping shapes replace the `# N x 3` comments throughout, including the fields
-still annotated with a question mark.
+jaxtyping shapes replace the `# N x 3` comments throughout. Every array a function
+takes or returns now states its shape, and the dimension names are shared across the
+package: `nodes`, `edges`, `edges_trail`, `edges_deviation`, `nodes_fixed`, `trails`,
+`sequences`, and `sequences_edges`. The padded node array the scan indexes with `-1`
+is `nodes_padded`, which is the one shape the kernel carries that the structure does
+not.
 
-`pyright` is already clean, which phase 1 reached by correcting the annotations that
+The shapes are verified rather than asserted. The root `conftest.py` installs
+jaxtyping's import hook with `beartype`, which turns every annotation into a runtime
+check for the whole suite. It found three that were wrong on its first run: the
+constructor accepted a flat edge array where it declared pairs,
+`sequences_edges_indices` was named after the flattened sequence grid when it holds
+one entry per trail edge, and the sequence lengths were documented as a column where
+they are a vector. The hook has to sit in a conftest rather than in the pytest
+`addopts`, because its plugin parses the raw command line before the ini options
+merge into it.
+
+The structure fields become JAX arrays, which is the decision recorded above and the
+part of it that had not landed. The trail search still computes with NumPy and the
+conversion happens once, at the boundary between the search and the structure.
+
+`pyright` was already clean, which phase 1 reached by correcting the annotations that
 lied rather than by adding shapes: the model took the empty `Structure` base class
 where it reads `EquilibriumStructure` attributes, two `vmap`-ed parameters were
 declared `int` where they receive a traced scalar, and `node_index`, `edge_index`,
 `sequences_edges` and `sequences_edges_indices` were declared `jax.Array` where they
 hold dicts and NumPy arrays. This phase keeps it clean while adding the shapes.
+
+Two functions could not be annotated honestly and went instead. `vector_length` took
+a `keepdims` flag that changed its return shape and that nothing ever passed, and
+`trail_length` was dead code carrying a comment that described a shape it never
+returned.
 
 ### Phase 4 — Tests
 

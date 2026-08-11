@@ -1,25 +1,49 @@
 from typing import NamedTuple
 
-import jax
+from jaxtyping import Array
+from jaxtyping import Float
 
 
 class EquilibriumState(NamedTuple):
     """
     The equilibrium state of a structure.
+
+    Attributes
+    ----------
+    xyz :
+        The position of every node.
+    loads :
+        The load vector applied at every node.
+    reactions :
+        The reaction force at every node, zero away from the supports.
+    lengths :
+        The length of every edge.
+    forces :
+        The force in every edge, positive in tension.
     """
 
-    xyz: jax.Array  # N x 3
-    loads: jax.Array  # N x 3
-    reactions: jax.Array  # N x 3
-    lengths: jax.Array  # M x 1
-    forces: jax.Array  # M x 1
+    xyz: Float[Array, "nodes 3"]
+    loads: Float[Array, "nodes 3"]
+    reactions: Float[Array, "nodes 3"]
+    lengths: Float[Array, "edges 1"]
+    forces: Float[Array, "edges 1"]
 
 
 class EquilibriumSequenceState(NamedTuple):
     """
     The equilibrium state of a sequence in a structure.
+
+    Attributes
+    ----------
+    xyz :
+        The position of the node of every trail in the sequence.
+    residuals :
+        The residual force at the node of every trail in the sequence.
+    lengths :
+        The signed length of the trail edge outgoing from every one of those
+        nodes.
     """
 
-    xyz: jax.Array  # S x 3
-    residuals: jax.Array  # S x 3
-    lengths: jax.Array  # S x 1
+    xyz: Float[Array, "trails 3"]
+    residuals: Float[Array, "trails 3"]
+    lengths: Float[Array, "trails"]

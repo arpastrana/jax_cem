@@ -149,10 +149,9 @@ def test_align_trails_can_trade_one_indirect_edge_for_another(braced_tower_2d):
     aligned = align_trails(structure)
 
     def indirect(candidate):
-        is_deviation = np.asarray(candidate.deviation_edges).astype(bool)
-        is_direct = np.asarray(candidate.edges_deviation_direct).astype(bool)
+        direct = np.asarray(candidate.edges_deviation_direct)
 
-        return int(np.sum(is_deviation & ~is_direct))
+        return int(np.sum(direct[candidate.num_edges_trail :] == 0.0))
 
     assert (
         np.asarray(aligned.sequences).shape[0]
@@ -207,7 +206,7 @@ def test_no_supports_is_rejected():
     Trails grow from supports, so there must be one.
     """
     with pytest.raises(ValueError, match="No supports"):
-        trails_from_edges(np.array([0, 1]), np.array([]), np.array([[0, 1]]))
+        trails_from_edges(np.array([0, 1]), np.empty(0, dtype=int), np.array([[0, 1]]))
 
 
 def test_no_trail_edges_is_rejected():
