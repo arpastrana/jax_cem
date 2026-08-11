@@ -2,56 +2,16 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
-from jaxtyping import Float
+from jaxtyping import Bool
 from jaxtyping import Int
-from scipy.sparse import coo_matrix
-from scipy.sparse import csc_matrix
 
 from jax_cem.datastructures.sequences import build_sequences
 from jax_cem.datastructures.trails import build_trails
 
-# ------------------------------------------------------------------------------
-# Connectivity
-# ------------------------------------------------------------------------------
-
-
-def connectivity_matrix(
-    edges: Int[np.ndarray, "edges 2"],
-    num_nodes: int | None = None,
-) -> csc_matrix:
-    """
-    Build the signed edge-node incidence matrix from indexed edges.
-
-    Parameters
-    ----------
-    edges :
-        The node index pair of each edge.
-    num_nodes :
-        The total number of nodes, fixing the column count. When omitted, it is
-        inferred as the largest node index plus one, which undercounts columns
-        if the highest-indexed node touches no edge.
-
-    Returns
-    -------
-    connectivity :
-        The incidence matrix in sparse format, one row per edge, with ``-1``
-        in the start node's column and ``+1`` in the end node's column.
-    """
-    # Iterating a JAX array element-wise costs one device sync per element;
-    # convert to NumPy once and slice columns vectorized.
-    edges_np = np.asarray(edges)
-    m = len(edges_np)
-    data = np.concatenate((-np.ones(m), np.ones(m)))
-    rows = np.concatenate((np.arange(m), np.arange(m)))
-    cols = np.concatenate((edges_np[:, 0], edges_np[:, 1]))
-
-    n = num_nodes if num_nodes is not None else int(np.max(edges_np)) + 1
-    shape = (m, n)
-
-    # coo_matrix.tocsc() yields a csc_matrix at runtime; scipy's bundled stubs
-    # widen the return to csc_array
-    return coo_matrix((data, (rows, cols)), shape=shape).tocsc()  # pyright: ignore[reportReturnType]
-
+__all__ = [
+    "EquilibriumStructure",
+    "Structure",
+]
 
 # ------------------------------------------------------------------------------
 # Structure
@@ -86,8 +46,6 @@ class EquilibriumStructure(Structure):
     origin_nodes: Int[Array, "trails"]
     sequences_edges: Int[Array, "sequences_edges trails"]
     sequences_edges_indices: Int[Array, "edges_trail"]
-    edges_deviation_direct: Float[Array, "edges"]
-    connectivity: Float[Array, "edges nodes"]
 
     def __init__(
         self,
@@ -107,7 +65,7 @@ class EquilibriumStructure(Structure):
         edges = np.concatenate((edges_trail, edges_deviation))
 
         trails = build_trails(nodes, supports, edges_trail)
-        data = build_sequences(trails, edges, len(nodes), len(edges_trail))
+        data = build_sequences(trails, edges)
 
         self.nodes = jnp.asarray(nodes)
         self.supports = jnp.asarray(supports)
@@ -118,11 +76,6 @@ class EquilibriumStructure(Structure):
         self.origin_nodes = data.origin_nodes
         self.sequences_edges = data.sequences_edges
         self.sequences_edges_indices = data.sequences_edges_indices
-        self.edges_deviation_direct = data.edges_deviation_direct
-
-        self.connectivity = jnp.asarray(
-            connectivity_matrix(edges, len(nodes)).toarray(),
-        )
 
     def __check_init__(self):
         """
@@ -132,6 +85,10 @@ class EquilibriumStructure(Structure):
         loops = np.flatnonzero(edges[:, 0] == edges[:, 1])
         if loops.size > 0:
             raise ValueError(f"Edges {loops.tolist()} are self-loops")
+
+        # a negative key would otherwise wrap, and the scatter would drop the edge
+        if np.any((edges < 0) | (edges >= self.num_nodes)):
+            raise ValueError("Edges must index existing nodes")
 
         if self.supports.shape[-1] != self.num_trails:
             raise ValueError(
@@ -152,6 +109,31 @@ class EquilibriumStructure(Structure):
         The node key pair of each edge, trail edges first.
         """
         return jnp.concatenate((self.edges_trail, self.edges_deviation), axis=-2)
+
+    @property
+    def is_edge_deviation_direct(self) -> Bool[Array, "edges_deviation"]:
+        """
+        Mask the deviation edges whose two nodes share a sequence.
+
+        Notes
+        -----
+        A deviation edge that spans two sequences is indirect, and only the
+        iterative equilibrium resolves it. Which edges those are follows from the
+        sequences, so it is derived here rather than stored, and it cannot fall
+        out of step with a trail that shifts.
+        """
+        rows = jnp.broadcast_to(
+            jnp.arange(self.num_sequences)[:, None],
+            self.sequences.shape,
+        )
+
+        # a padded sequence entry is -1, which lands on the extra last slot
+        sequence_of = jnp.full(self.num_nodes + 1, -1, dtype=int)
+        sequence_of = sequence_of.at[self.sequences].set(rows)[:-1]
+
+        nodes_u, nodes_v = self.edges_deviation[:, 0], self.edges_deviation[:, 1]
+
+        return sequence_of[nodes_u] == sequence_of[nodes_v]
 
     @property
     def node_index(self) -> dict[int, int]:

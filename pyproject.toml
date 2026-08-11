@@ -36,7 +36,6 @@ dynamic = ["version"]
 dependencies = [
     "jax[cpu]>=0.6.1",
     "numpy>=2.1",
-    "scipy>=1.14.1",
     "equinox>=0.13.4",
     "jaxtyping>=0.2.33",
 ]
@@ -134,6 +133,6 @@ exclude = ["**/__pycache__"]
 # Validate against the minimum supported Python, independent of the CI runner.
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
-# compas_cem and scipy ship no py.typed marker.
+# compas_cem ships no py.typed marker.
 reportMissingModuleSource = "none"
 reportMissingTypeStubs = "none"

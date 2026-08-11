@@ -149,9 +149,7 @@ def test_align_trails_can_trade_one_indirect_edge_for_another(braced_tower_2d):
     aligned = align_trails(structure)
 
     def indirect(candidate):
-        direct = np.asarray(candidate.edges_deviation_direct)
-
-        return int(np.sum(direct[candidate.num_edges_trail :] == 0.0))
+        return int(np.sum(~np.asarray(candidate.is_edge_deviation_direct)))
 
     assert (
         np.asarray(aligned.sequences).shape[0]

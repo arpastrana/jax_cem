@@ -44,11 +44,20 @@ indexes it, and any source with its own edge order — JSON, a mesh, a COMPAS CE
 diagram — is permuted into it at the boundary.
 
 Two consequences reach past the constructor. Trail and deviation edges occupy
-contiguous blocks, so the masks the kernel used to multiply through become slices.
-`deviation_edges` is gone: the node equilibrium slices the deviation rows out of the
-connectivity, which also keeps the trail rows out of the edge vector product.
-`edges_deviation_direct` still spans every edge and shrinks to the deviation block in
-the reshape. Trail-edge forces are outputs, recovered
+contiguous blocks, so the masks the kernel used to multiply through are gone:
+`deviation_edges` because the deviation edges are their own array, and
+`edges_deviation_direct` because it is derived from the sequences on demand.
+
+The edges are **not** reordered into `[trail | deviation_direct | deviation_indirect]`,
+which an earlier draft of this roadmap proposed so that the first equilibrium pass
+became a slice. Whether a deviation edge is direct is a property of the current
+sequence layout, not of the edge: `align_trails` shifts trails and changes which edges
+qualify, which `test_align_trails_can_trade_one_indirect_edge_for_another` pins. A
+three-block order would therefore have to permute the edge array on alignment, and any
+per-edge parameter built against the earlier order would then address the wrong edges,
+silently. The order stays fixed and the distinction stays a mask.
+
+Trail-edge forces are outputs, recovered
 from the residuals, so `ParameterState.forces` covers only the deviation block;
 the trail entries the old parameter array carried were overwritten on every call
 and never read.
@@ -211,13 +220,19 @@ disappears in the reshape, where ordering the edges as
 
 The graph operations are gathers and scatters, not matrix products. Edge vectors are
 `xyz[edges[:, 1]] - xyz[edges[:, 0]]`, and the deviation force at a node is a
-`segment_sum` over the deviation edges. Both were verified equal to the dense forms
-they replace, which removes `connectivity` and `incidence` entirely. This diverges
-from `jax_fdm`, which keeps a dense `connectivity` and a `BCOO` variant because the
-force density method assembles and solves a matrix. The CEM steps through sequences
-and accumulates at nodes, so the matrix buys nothing and costs `edges * nodes`.
-The conversion lands behind a benchmark, since the gain is asymptotic and the
-baselines are small.
+`segment_sum` over the deviation edges, which removes `connectivity` and `incidence`
+entirely. This diverges from `jax_fdm`, which keeps a dense `connectivity` and a
+`BCOO` variant because the force density method assembles and solves a matrix. The CEM
+steps through sequences and accumulates at nodes, so the matrix buys nothing and costs
+`edges * nodes`.
+
+The conversion landed behind a benchmark, since the gain is asymptotic and the
+baselines are small. Jitted on synthetic trail grids: 3.9x at 100 nodes, 36x at 900,
+and 88x at 3600, where the dense form spent 966 ms against 11 ms. The edge vector half
+is exact, because the matrix product added a zero for every node an edge does not
+touch. The accumulation half is exact on the six fixtures but reduces in a different
+order than a dot product, so in general it agrees to rounding, which double precision
+keeps far below the tolerance the baselines use.
 
 The six topology fixtures are ported to the array constructor in the same phase,
 which is what keeps the suite green across it and gives the constructor its first
@@ -229,10 +244,18 @@ optional extra, for the examples and the `compas_xcheck` tests.
 chance of disagreement), an added `vectors`, and `forces` and `lengths` shaped
 `"edges"` rather than `"edges 1"`.
 
-The sentinel that currently encodes a plane-driven trail edge as `length == 0.0`
-becomes an explicit mask on the structure. Whether a trail edge is driven by a
-length or by a plane is a fact about the topology, not a reserved value in the
-parameters.
+The sentinel that encodes a plane-driven trail edge as `length == 0.0` is deferred
+rather than fixed. Whether a trail edge is driven by a length or by a plane is a fact
+about the model and not a reserved value in the parameters, so the mask belongs on the
+structure — but nothing derives it, which means a fifth constructor argument. That is
+the same question as auxiliary trails and the shifts before them: an authoring decision
+with nowhere to live. It waits for the constructor to settle.
+
+The six topology fixtures are **not** ported to the array constructor in this phase,
+which is a change from the plan above. `compas_cem` stays a dev dependency and
+`tests/converters.py` stays with it, because the frozen baselines it produces are the
+only evidence that the rewritten kernel computes what the old one did. The port waits
+until the rewrite has landed in full.
 
 ### Phase 3 — Typing
 

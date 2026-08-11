@@ -7,7 +7,6 @@ from typing import NamedTuple
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
-from jaxtyping import Float
 from jaxtyping import Int
 
 __all__ = [
@@ -26,14 +25,11 @@ class SequenceData(NamedTuple):
     origin_nodes: Int[Array, "trails"]
     sequences_edges: Int[Array, "sequences_edges trails"]
     sequences_edges_indices: Int[Array, "edges_trail"]
-    edges_deviation_direct: Float[Array, "edges"]
 
 
 def build_sequences(
     trails: list[tuple[int, ...]],
     edges: Int[np.ndarray, "edges 2"],
-    num_nodes: int,
-    num_edges_trail: int,
     shifts: Int[np.ndarray, "trails"] | None = None,
 ) -> SequenceData:
     """
@@ -45,10 +41,6 @@ def build_sequences(
         One tuple of node keys per trail, running from origin to support.
     edges :
         The node key pair of each edge, trail edges first.
-    num_nodes :
-        The number of nodes in the structure.
-    num_edges_trail :
-        The number of trail edges, which is where the deviation block starts.
     shifts :
         The sequence each trail starts at. Defaults to every trail starting at
         the first sequence.
@@ -56,8 +48,7 @@ def build_sequences(
     Returns
     -------
     data :
-        The sequences, the origin nodes, the sequence-to-edge maps, and the mask
-        of deviation edges whose two nodes share a sequence.
+        The sequences, the origin nodes, and the sequence-to-edge maps.
 
     Notes
     -----
@@ -88,24 +79,11 @@ def build_sequences(
 
     indices = np.flatnonzero(sequences_edges.ravel() >= 0)
 
-    sequence_of = np.full(num_nodes, -1, dtype=int)
-    for index, sequence in enumerate(sequences):
-        for node in sequence:
-            if node >= 0:
-                sequence_of[node] = index
-
-    is_deviation = np.zeros(len(edges), dtype=bool)
-    is_deviation[num_edges_trail:] = True
-    is_direct = sequence_of[edges[:, 0]] == sequence_of[edges[:, 1]]
-
     return SequenceData(
         sequences=jnp.asarray(sequences),
         origin_nodes=jnp.asarray(origin_nodes),
         sequences_edges=jnp.asarray(sequences_edges),
         sequences_edges_indices=jnp.asarray(indices),
-        edges_deviation_direct=jnp.asarray(
-            np.logical_and(is_deviation, is_direct).astype(float),
-        ),
     )
 
 

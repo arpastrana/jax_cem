@@ -3,7 +3,7 @@ from jaxtyping import Array
 from jaxtyping import Float
 
 
-def vector_length(v: Float[Array, "3"]) -> Float[Array, "1"]:
+def vector_length(v: Float[Array, "3"]) -> Float[Array, ""]:
     """
     Calculate the length of a vector over its last dimension.
 
@@ -26,11 +26,7 @@ def vector_length(v: Float[Array, "3"]) -> Float[Array, "1"]:
     is_zero_vector = jnp.allclose(v, 0.0)
     d = jnp.where(is_zero_vector, jnp.ones_like(v), v)
 
-    length = jnp.where(
-        is_zero_vector,
-        0.0,
-        jnp.linalg.norm(d, axis=-1, keepdims=True),
-    )
+    length = jnp.where(is_zero_vector, 0.0, jnp.linalg.norm(d, axis=-1))
 
     return length
 

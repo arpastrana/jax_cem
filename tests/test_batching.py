@@ -32,7 +32,7 @@ def parameters(force):
     return ParameterState(
         xyz=jnp.zeros((4, 3)),
         loads=jnp.tile(jnp.array([0.0, -1.0, 0.0]), (4, 1)),
-        forces=jnp.array([[0.0], [0.0], [0.0], [force]]),
+        forces=jnp.array([force]),
         lengths=jnp.array([[1.0], [1.0], [1.0], [0.0]]),
         planes=jnp.zeros((4, 6)),
     )

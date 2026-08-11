@@ -52,13 +52,7 @@ def align_trails(structure: "EquilibriumStructure") -> "EquilibriumStructure":
     edges = np.asarray(structure.edges)
     shifts = _shifts_from_indirect_edges(trails, np.asarray(structure.edges_deviation))
 
-    data = build_sequences(
-        trails,
-        edges,
-        structure.num_nodes,
-        structure.num_edges_trail,
-        shifts,
-    )
+    data = build_sequences(trails, edges, shifts)
 
     return eqx.tree_at(
         lambda s: (
@@ -66,7 +60,6 @@ def align_trails(structure: "EquilibriumStructure") -> "EquilibriumStructure":
             s.origin_nodes,
             s.sequences_edges,
             s.sequences_edges_indices,
-            s.edges_deviation_direct,
         ),
         structure,
         replace=tuple(data),

@@ -218,7 +218,8 @@ def test_force_equilibrium_jax_output(topology, output):
     check_nodes_xyz(form, node_xyz_out)
     check_edges_forces(form, edge_force_out)
     check_edges_lengths(form, edge_length_out)
-    check_nodes_reactions(form, support_residual_out)
+    check_nodes_residuals(form, support_residual_out)
+    check_state_lengths(eqstate, structure, edge_length_out)
 
 
 # ==============================================================================
@@ -247,7 +248,23 @@ def check_edges_lengths(form, edge_length_out):
         assert np.allclose(length, test_length)
 
 
-def check_nodes_reactions(form, support_residual_out):
+def check_state_lengths(eqstate, structure, edge_length_out):
+    """
+    Read the lengths off the state, which the form diagram does not carry.
+
+    Notes
+    -----
+    The diagram stores them under an attribute its own length query does not
+    read, so `check_edges_lengths` measures the node coordinates instead and the
+    state's own array goes unchecked.
+    """
+    edge_index = structure.edge_index
+    for (u, v), length in edge_length_out.items():
+        index = edge_index.get((u, v), edge_index.get((v, u)))
+        assert np.allclose(length, eqstate.lengths[index]), (u, v)
+
+
+def check_nodes_residuals(form, support_residual_out):
     for node in form.nodes(data=False):
         residual = support_residual_out.get(node, [0.0, 0.0, 0.0])
         test_residual = form.reaction_force(node)

@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `EquilibriumState.vectors`, the vector of every edge, which the state used
+  to leave the caller to recompute from the node positions.
+- Added `EquilibriumStructure.is_edge_deviation_direct`, a property that masks the
+  deviation edges whose two nodes share a sequence. It replaces a stored field:
+  which edges those are follows from the sequences, so deriving it means it cannot
+  fall out of step with a trail that shifts.
+- Added `EquilibriumModel.nodes_deviation`, which accumulates the deviation force at
+  every node, and `EquilibriumModel.nodes_residual`, which scatters the residual of
+  every sequence into the nodes it belongs to.
+- Added an edge range check to `EquilibriumStructure.__check_init__`. `scipy` used to
+  reject a negative node key on the caller's behalf while building the connectivity
+  matrix; without the matrix a negative key would wrap and the accumulation would drop
+  the edge, giving a wrong equilibrium with no error.
+- Added `tests/test_kernel.py`, which pins the direction of a deviation force, the
+  padding of a sequence a trail does not reach, and the edge range check. The frozen
+  baselines catch a swapped force direction only indirectly.
 - Added `jax_cem.datastructures.sequences`, holding `SequenceData`, `build_sequences`,
   and `sequences_from_trails`, which `jax_cem.datastructures.trails` used to carry.
   The trail search orders the nodes; laying that order out into the sequences the
@@ -39,6 +55,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Changed the equilibrium kernel from matrix products to gathers and scatters. Edge
+  vectors are now `xyz[edges[:, 1]] - xyz[edges[:, 0]]`, and the deviation force is a
+  `segment_sum` over the deviation edges rather than a dot product per node. Timed on
+  synthetic trail grids with `jax.jit`: 0.47 ms to 0.12 ms at 100 nodes, 50 ms to
+  1.4 ms at 900, and 966 ms to 11 ms at 3600. The old form cost `edges * nodes` in
+  time and in memory, so the matrix was also the largest array the structure carried.
+  The six regression fixtures come out identical; a scatter reduces in an order a dot
+  product need not follow, so equality is to rounding rather than to the bit in
+  general, and double precision is what keeps the difference far below the tolerance
+  the baselines are compared at.
+- Changed `edges_vector` to take the edges of a graph rather than its connectivity
+  matrix. This half of the conversion is exact: the matrix product added a zero for
+  every node an edge does not touch, and adding an exact zero cannot perturb a float.
+- Changed `sequences_equilibrium` to resolve `use_indirect` once, before the scan,
+  into the force array it selects. The flag reached three signatures and was consulted
+  at every node of every sequence, though it settles the same question every time.
+- Changed `EquilibriumState` to the Formax field set: `residuals` in place of
+  `reactions` and defined at every node rather than only at the supports, an added
+  `vectors`, and `forces` and `lengths` shaped `"edges"` rather than `"edges 1"`. The
+  values do not move: COMPAS CEM stores the residual, unnegated, under a reaction's
+  name, which is what the frozen baselines were captured from. The container stays a
+  named tuple where Formax uses an equinox module.
+- Changed `ParameterState.forces` to cover the deviation block alone, shaped
+  `"edges_deviation"`. The trail entries were overwritten on every call and never read.
+- Changed `vector_length` to return a scalar rather than a one-element vector, which
+  is what flattens the per-edge quantities of the state.
+- Changed `build_sequences` to take the trails, the edges and the shifts alone. The
+  node and trail edge counts were only needed by the mask that is now derived.
 - Changed every array annotation in the package to a jaxtyping shape, replacing the
   `# N x 3` comments and the bare `jax.Array` declarations. The shapes were verified
   by running the suite under jaxtyping's import hook with a runtime typechecker,
@@ -90,6 +134,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Removed `EquilibriumStructure.connectivity` and `connectivity_matrix`, which the
+  gather and scatter kernel leaves with no reader. `connectivity_matrix` was public
+  through the star import of `jax_cem.datastructures`, which now carries an `__all__`.
+- Removed `EquilibriumModel.node_equilibrium`. With the accumulation done for every
+  node at once, the node index only selects a row, and keeping the function would have
+  forced the vectorization to stay.
+- Removed `SequenceData.edges_deviation_direct` and the structure field it fed, in
+  favour of the derived `is_edge_deviation_direct`. The stored mask spanned every edge
+  though its whole trail half was zero by construction.
+- Removed the dependency on `scipy`, which only `connectivity_matrix` imported.
 - Removed `EquilibriumStructure.trail_edges` and `EquilibriumStructure.deviation_edges`.
   Nothing read the first, and their names differed from the `edges_trail` and
   `edges_deviation` fields only in word order. The second was a mask over a

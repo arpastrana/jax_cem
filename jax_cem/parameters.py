@@ -19,7 +19,8 @@ class ParameterState(NamedTuple):
     loads :
         The load vector applied at every node.
     forces :
-        The force in every edge, of which only the deviation entries are read.
+        The force in every deviation edge. A trail edge force is an output,
+        recovered from the trail residual that passes through it.
     lengths :
         The signed length of the trail edge outgoing from every node, where zero
         hands the length over to the plane of the node.
@@ -30,7 +31,7 @@ class ParameterState(NamedTuple):
 
     xyz: Float[Array, "nodes 3"]
     loads: Float[Array, "nodes 3"]
-    forces: Float[Array, "edges 1"]
+    forces: Float[Array, "edges_deviation"]
     # TODO: find a way to treat edge lengths and planes edgewise, not nodewise
     lengths: Float[Array, "nodes 1"]
     planes: Float[Array, "nodes 6"]
