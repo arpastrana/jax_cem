@@ -1,0 +1,29 @@
+# Pre-commit hooks for jax_cem. Install with:
+#
+#     uv run pre-commit install
+#
+# Run against all files with:
+#
+#     uv run pre-commit run --all-files
+#
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      # Lint and auto-fix (imports, pycodestyle, pyflakes). Mirrors `ruff check`.
+      - id: ruff
+        args: [--fix]
+      # Format the code, including snippets inside docstrings.
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # examples/data keeps the JSON fixtures byte-stable.
+      - id: trailing-whitespace
+        exclude: ^examples/data/
+      - id: end-of-file-fixer
+        exclude: ^examples/data/
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict

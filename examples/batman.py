@@ -2,18 +2,9 @@ import os
 
 import matplotlib.pyplot as plt
 
-from math import copysign
-
-from functools import partial
 from time import time
 
 from compas.datastructures import Mesh
-from compas.geometry import Line, Polyline, Point
-from compas.geometry import Translation
-from compas.geometry import scale_vector
-from compas.utilities import geometric_key
-
-from compas_cem.diagrams import TopologyDiagram
 
 from jax import jit
 from jax import vmap
@@ -25,9 +16,8 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 
 from jax_fdm.datastructures import FDNetwork
-from jax_fdm.equilibrium import fdm
 from jax_fdm.equilibrium import EquilibriumModel as FDModel
-from jax_fdm.equilibrium import EquilibriumStructure as FDStructure
+from jax_fdm.equilibrium import Structure as FDStructure
 from jax_fdm.equilibrium import network_updated
 from jax_fdm.visualization import Plotter as PlotterFD
 

@@ -1,0 +1,71 @@
+name: Test
+
+# A branch runs CI once it has a pull request, and once per commit rather than
+# twice: an unfiltered `push` fires alongside `pull_request` on the same SHA.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel a PR's in-flight run when new commits are pushed to it. Every other
+# event gets a run-unique group, so a stuck run never holds up a later one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Lint
+        run: uvx ruff check jax_cem/ tests/
+      - name: Format
+        run: uvx ruff format --check jax_cem/ tests/
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # Report every version's result; a failure on one is not a reason to hide
+      # the others.
+      fail-fast: false
+      matrix:
+        # Floor and ceiling of the supported range. `requires-python` still
+        # admits the interior version; nothing tests it.
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      # The suite recompiles the same XLA kernels every run, so its runtime is
+      # compilation-bound. Persist the compiled kernels across runs; the key
+      # includes the jax version so a jax bump (which changes the emitted HLO)
+      # starts a fresh cache. The absolute dir goes through GITHUB_ENV so
+      # actions/cache and JAX resolve the same path (GitHub does not expand ~
+      # inside an env: block, and JAX reads it raw).
+      - name: Resolve jit cache location
+        id: jax
+        run: |
+          echo "version=$(uv run python -c 'import jax; print(jax.__version__)')" >> "$GITHUB_OUTPUT"
+          echo "JAX_COMPILATION_CACHE_DIR=$RUNNER_TEMP/jax_cem_jit_cache" >> "$GITHUB_ENV"
+
+      - name: Cache compiled XLA kernels
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.JAX_COMPILATION_CACHE_DIR }}
+          key: jax-jit-py${{ matrix.python-version }}-jax${{ steps.jax.outputs.version }}-${{ github.sha }}
+          restore-keys: |
+            jax-jit-py${{ matrix.python-version }}-jax${{ steps.jax.outputs.version }}-
+
+      - name: Run tests
+        run: uv run pytest

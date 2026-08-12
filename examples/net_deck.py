@@ -29,13 +29,13 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.equilibrium import EquilibriumStructure
+from jax_cem.equilibrium import Structure
 from jax_cem.equilibrium import form_from_eqstate
 
 from jax_fdm.datastructures import FDNetwork
 from jax_fdm.equilibrium import fdm
 from jax_fdm.equilibrium import EquilibriumModel as FDModel
-from jax_fdm.equilibrium import EquilibriumStructure as FDStructure
+from jax_fdm.equilibrium import Structure as FDStructure
 from jax_fdm.equilibrium import network_updated
 from jax_fdm.visualization import Plotter as PlotterFD
 
@@ -93,7 +93,7 @@ print(f"{topology.number_of_indirect_deviation_edges()=}")
 # JAX CEM - form finding
 # ------------------------------------------------------------------------------
 
-structure = EquilibriumStructure.from_topology_diagram(topology)
+structure = Structure.from_topology_diagram(topology)
 model = EquilibriumModel.from_topology_diagram(topology)
 eqstate = model(structure, tmax=1)
 form_jax = form_from_eqstate(structure, eqstate)

@@ -1,27 +1,138 @@
-[tool.black]
-line-length = 120
+[build-system]
+# 77.0.3 is the first setuptools that understands the PEP 639 license fields
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jax_cem"
+description = "The combinatorial equilibrium modeling framework in JAX"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Rafael Pastrana", email = "arpastrana@princeton.edu" }]
+requires-python = ">=3.11,<3.14"
+keywords = [
+    "jax",
+    "automatic-differentiation",
+    "architecture",
+    "form-finding",
+    "structural-design",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: Unix",
+    "Operating System :: POSIX",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dynamic = ["version"]
+dependencies = [
+    "jax[cpu]>=0.6.1",
+    "numpy>=2.1",
+    "equinox>=0.13.4",
+    "jaxtyping>=0.2.33",
+]
+
+[project.urls]
+Homepage = "https://github.com/arpastrana/jax_cem"
+Repository = "https://github.com/arpastrana/jax_cem"
+
+[dependency-groups]
+# ruff is pinned to the .pre-commit-config.yaml rev so `uv run ruff` and the hook
+# cannot disagree; bump both together.
+dev = [
+    "pytest>=8.0",
+    "pytest-split",
+    "pytest-xdist",
+    "pre-commit>=4.0",
+    "ruff==0.15.20",
+    "compas_cem>=0.8.6",
+    "pytest-lazy-fixtures",
+    "beartype>=0.19",
+]
+# Exact pin: pyright basic-mode default diagnostics can shift between releases.
+typecheck = ["pyright==1.1.411"]
+
+# compas_cem builds the topology fixtures until the native constructor replaces
+# them in phase 2 (docs/roadmap.md). Pinned to git: its COMPAS 2.x and numpy 2
+# support is on main but unreleased, and 0.8.6 on PyPI still requires
+# compas==1.17.10. Revert to a version pin once 0.8.7 ships.
+[tool.uv.sources]
+compas_cem = { git = "https://github.com/arpastrana/compas_cem", branch = "main" }
+
+[tool.setuptools.dynamic]
+version = { attr = "jax_cem.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["jax_cem*"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+# The examples still build COMPAS CEM topology diagrams. They rejoin the linter
+# as phase 5 ports them to the native constructor (docs/roadmap.md).
+extend-exclude = ["examples"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+# D202 and D300 enforce the multi-line docstring style. COM812 adds a magic
+# trailing comma so the formatter explodes wrapped calls one element per line.
+select = ["COM812", "D202", "D300", "E", "F", "I", "W"]
+# jaxtyping shape strings are not valid forward references, tripping F722.
+ignore = ["F722"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+known-first-party = ["jax_cem"]
+
+[tool.ruff.lint.per-file-ignores]
+# Re-exports and the jax x64 config run before the submodule imports.
+"jax_cem/__init__.py" = ["E402", "F401"]
+# Submodule re-exports.
+"jax_cem/**/__init__.py" = ["F401", "F403"]
+# jaxtyping shape strings reference dimension names that pyflakes reads as
+# undefined identifiers (F821); pyright checks undefined names package-wide.
+"jax_cem/**/*.py" = ["F821"]
+# Tests use JAX bool comparisons (E712) and long inline arrays (E501).
+"tests/*" = ["E712", "E501", "F821"]
 
 [tool.pytest.ini_options]
-minversion = "6.0"
-testpaths = ["tests", "src/jax_cem"]
-python_files = [
-    "test_*.py",
-    "tests.py"
+testpaths = ["tests", "jax_cem"]
+python_files = ["test_*.py"]
+# -n auto fans the suite across all cores (pytest-xdist); pass -n0 to serialize
+# for debugging. --dist loadfile pins each file to one worker so its tests
+# report consecutively.
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--doctest-modules",
+    "--tb=short",
+    "-v",
+    "-n",
+    "auto",
+    "--dist",
+    "loadfile",
 ]
-addopts = "-ra --strict --doctest-modules --doctest-glob=*.rst --tb=short"
-doctest_optionflags= "NORMALIZE_WHITESPACE IGNORE_EXCEPTION_DETAIL ALLOW_UNICODE ALLOW_BYTES NUMBER"
-filterwarnings = "ignore::DeprecationWarning"
+markers = [
+    # Deletable scaffolding; run the COMPAS-free suite with -m "not compas_xcheck".
+    "compas_xcheck: cross-check a result against COMPAS CEM",
+]
 
-[tool.isort]
-line_length = 120
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-force_single_line = true
-ensure_newline_before_comments = true
-known_first_party = "jax_cem"
-default_section = "THIRDPARTY"
-forced_separate = "test_jax_cem"
-skip = ["__init__.py"]
-
+[tool.pyright]
+include = ["jax_cem"]
+exclude = ["**/__pycache__"]
+# Validate against the minimum supported Python, independent of the CI runner.
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+# compas_cem ships no py.typed marker.
+reportMissingModuleSource = "none"
+reportMissingTypeStubs = "none"

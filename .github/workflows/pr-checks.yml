@@ -1,21 +1,40 @@
 name: verify-pr-checklist
+
 on:
   pull_request:
     types: [assigned, opened, synchronize, reopened, labeled, unlabeled]
     branches:
       - main
-      - master
+
+# Cancel a PR's in-flight checks when new commits are pushed to it. This
+# workflow is pull_request-only, so cancelling is always safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    name: Check Actions
+  changelog:
+    name: Changelog check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
-      - name: Changelog check
-        uses: Zomzog/changelog-checker@v1.2.0
+      - uses: actions/checkout@v5
+      - uses: Zomzog/changelog-checker@v1.2.0
         with:
           fileName: CHANGELOG.md
           checkNotification: Simple
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  typecheck:
+    name: Type check (pyright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Install package
+        run: uv sync --group dev --group typecheck
+      - name: Run pyright
+        run: uv run pyright

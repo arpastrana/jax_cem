@@ -2,91 +2,42 @@
 
 The combinatorial equilibrium modeling framework in JAX.
 
+`jax_cem` computes the static equilibrium of pin-jointed bar structures with the
+combinatorial equilibrium modeling (CEM) form-finding algorithm. The
+implementation is differentiable, jittable, and vectorizable, so an equilibrium
+state can be used directly as a term in a gradient-based design problem.
 
-## Getting started with this project
+> **Status.** Under active refresh. The public API is being reshaped around an
+> array-based structure that satisfies the Formax equilibrium contract; see
+> [`docs/roadmap.md`](docs/roadmap.md).
 
-### Setup code editor
+## Installation
 
-1. Open project folder in VS Code
-2. Select python environment for the project
-3. First time using VS Code and on Windows? Make sure select the correct terminal profile: `Ctrl+Shift+P`, `Terminal: Select Default Profile` and select `Command Prompt`.
+```bash
+pip install jax_cem
+```
 
-> All terminal commands in the following sections can be run from the VS Code integrated terminal. 
+Python 3.11 to 3.13.
 
+## Development
 
-### First steps with git
+The project uses [uv](https://docs.astral.sh/uv/).
 
-1. Go to the `Source control` tab
-2. Make an initial commit with all newly created files
+```bash
+uv sync --group dev          # create the environment
+uv run pre-commit install    # install the ruff hook
+uv run pytest                # run the tests
+uv run ruff check .          # lint
+uv run ruff format .         # format
+```
 
+Cross-checks against the reference COMPAS CEM implementation are marked
+`compas_xcheck`. Run the suite without them with:
 
-### First steps with code
+```bash
+uv run pytest -m "not compas_xcheck"
+```
 
-1. Install the newly created project 
+## License
 
-        pip install -e .
-
-2. Install it on Rhino
-
-        python -m compas_rhino.install
-
-
-### Code conventions
-
-Code convention follows [PEP8](https://pep8.org/) style guidelines and line length of 120 characters.
-
-1. Check adherence to style guidelines
-
-        invoke lint
-
-2. Format code automatically
-
-        invoke format
-
-
-### Documentation
-
-Documentation is generated automatically out of docstrings and [RST](https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html) files in this repository
-
-1. Generate the docs
-
-        invoke docs
-
-2. Check links in docs are valid
-
-        invoke linkcheck
-
-3. Open docs in your browser (file explorer -> `dist/docs/index.html`)
-
-
-### Testing
-
-Tests are written using the [pytest](https://docs.pytest.org/) framework
-
-1. Run all tests from terminal
-
-        invoke test
-
-2. Or run them from VS Code from the `Testing` tab
-
-
-### Developing Grasshopper components
-
-We use [Grasshopper Componentizer](https://github.com/compas-dev/compas-actions.ghpython_components) to develop Python components that can be stored and edited on git.
-
-1. Build components
-
-        invoke build-ghuser-components
-
-2. Install components on Rhino
-
-        python -m compas_rhino.install
-
-
-### Publish release
-
-Releases follow the [semver](https://semver.org/spec/v2.0.0.html) versioning convention.
-
-1. Create a new release
-
-        invoke release major
+Apache-2.0. See [LICENSE](LICENSE).
