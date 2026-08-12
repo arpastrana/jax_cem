@@ -4,6 +4,7 @@ import numpy as np
 from jaxtyping import Array
 from jaxtyping import Int
 
+from jax_cem.datastructures.sequences import Sequence
 from jax_cem.datastructures.trails import Trails
 from jax_cem.datastructures.trails import build_trails
 from jax_cem.datastructures.trails import search_trails
@@ -30,6 +31,12 @@ class Structure(eqx.Module):
 
     The trail search runs in the constructor, so a structure is either laid out
     into trails and sequences or it does not exist.
+
+    Every shape here describes one structure. A batch is taken by `vmap`, which
+    hands a function one structure at a time, so no annotation states a leading
+    batch axis and a stacked container is outside what the views promise. The
+    counts are what a stacked one can still be asked, since they read trailing
+    axes off the layout rather than through a view that annotates it.
     """
 
     nodes: Int[Array, "nodes"]
@@ -37,6 +44,7 @@ class Structure(eqx.Module):
     edges_trail: Int[Array, "edges_trail 2"]
     edges_deviation: Int[Array, "edges_deviation 2"]
 
+    origin_nodes: Int[Array, "trails"]
     trails: Trails
 
     def __init__(
@@ -50,12 +58,14 @@ class Structure(eqx.Module):
             raise ValueError("Edges must be given as an array of node key pairs")
 
         trail_nodes = search_trails(nodes, supports, edges_trail)
+        trails, origin_nodes = build_trails(trail_nodes, edges_trail, len(nodes))
 
         self.nodes = jnp.asarray(nodes)
         self.supports = jnp.asarray(supports)
         self.edges_trail = jnp.asarray(edges_trail)
         self.edges_deviation = jnp.asarray(edges_deviation)
-        self.trails = build_trails(trail_nodes, edges_trail)
+        self.origin_nodes = origin_nodes
+        self.trails = trails
 
     def __check_init__(self):
         """
@@ -100,11 +110,39 @@ class Structure(eqx.Module):
         return jnp.concatenate((self.edges_trail, self.edges_deviation), axis=-2)
 
     @property
-    def origin_nodes(self) -> Int[Array, "trails"]:
+    def sequences(self) -> Sequence:
         """
-        The first node of each trail, as the layout states it.
+        Every sequence of the structure, stacked into one container.
         """
-        return self.trails.origin_nodes
+        return self.trails.sequences
+
+    @property
+    def sequence_nodes(self) -> Int[Array, "sequences trails"]:
+        """
+        The node at every slot of the layout, where ``-1`` marks an empty slot.
+        """
+        return self.sequences.nodes
+
+    @property
+    def sequence_edges(self) -> Int[Array, "sequences trails"]:
+        """
+        The trail edge leaving every slot of the layout, ``-1`` where none does.
+        """
+        return self.sequences.edges
+
+    @property
+    def nodes_sequence(self) -> Int[Array, "nodes"]:
+        """
+        The sequence that every node is put in equilibrium at.
+        """
+        return self.trails.nodes_sequence
+
+    @property
+    def edges_sequence(self) -> Int[Array, "edges_trail"]:
+        """
+        The slot of the layout that every trail edge occupies, counted row by row.
+        """
+        return self.trails.edges_sequence
 
     @property
     def node_index(self) -> dict[int, int]:
@@ -163,11 +201,11 @@ class Structure(eqx.Module):
         """
         The number of trails.
         """
-        return self.trails.sequences.nodes.shape[-1]
+        return self.sequences.nodes.shape[-1]
 
     @property
     def num_sequences(self) -> int:
         """
         The number of sequences.
         """
-        return self.trails.sequences.nodes.shape[-2]
+        return self.sequences.nodes.shape[-2]

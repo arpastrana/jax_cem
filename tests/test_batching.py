@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -139,8 +140,9 @@ def test_the_gradient_of_a_batch_is_finite():
     def loss(length):
         params = parameters(0.5)
         lengths = params.lengths.at[0].set(length)
+        params_length = eqx.tree_at(lambda tree: tree.lengths, params, replace=lengths)
 
-        return jnp.sum(model(params._replace(lengths=lengths), structure).xyz ** 2)
+        return jnp.sum(model(params_length, structure).xyz ** 2)
 
     gradients = jax.vmap(jax.grad(loss))(jnp.array([1.0, 2.0]))
 

@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 from equinox.internal import while_loop
 from jax import vmap
@@ -213,9 +214,16 @@ class EquilibriumModel:
         which only the iterative passes resolve. The pass masks them out of the
         forces it carries, once, rather than at every node of every sequence.
         """
-        if not use_indirect:
-            forces = jnp.where(is_edge_deviation_direct(structure), params.forces, 0.0)
-            params = params._replace(forces=forces)
+        if use_indirect:
+            params_pass = params
+        else:
+            is_direct = is_edge_deviation_direct(structure)
+            forces_direct = jnp.where(is_direct, params.forces, 0.0)
+            params_pass = eqx.tree_at(
+                lambda tree: tree.forces,
+                params,
+                replace=forces_direct,
+            )
 
         def calculate_sequence_state(state, sequence):
             """
@@ -228,7 +236,7 @@ class EquilibriumModel:
             xyz_nodes = xyz_nodes.at[nodes, :].set(state_seq.xyz, mode="drop")
 
             state_seq = self.sequence_equilibrium(
-                params,
+                params_pass,
                 structure,
                 sequence,
                 xyz_nodes,
@@ -250,7 +258,7 @@ class EquilibriumModel:
         state_end, (residuals_trail, lengths_seqs) = scan(
             calculate_sequence_state,
             (xyz, state_seq_start),
-            structure.trails.sequences,
+            structure.sequences,
         )
 
         xyz_end, _ = state_end
@@ -304,9 +312,9 @@ class EquilibriumModel:
         # Trail edge lengths
         # NOTE: Probably inefficient to pre-compute both versions of length.
         # Passing the length functions to jnp.where may skip one evaluation.
-        planes_seq = gather_padded(params.planes, sequence.trail_edge_index)
+        planes_seq = gather_padded(params.planes, sequence.edges)
         lengths_plane = nodes_length_plane(planes_seq, xyz_seq, residuals_trail)
-        lengths_signed = gather_padded(params.lengths, sequence.trail_edge_index)
+        lengths_signed = gather_padded(params.lengths, sequence.edges)
         is_plane_missing = is_plane_absent(planes_seq)
         lengths_seq = jnp.where(is_plane_missing, lengths_signed, lengths_plane)
 
@@ -346,14 +354,14 @@ def nodes_equilibrium(
     edges instead of one pass per node. A padded slot addresses no node and
     gathers zero, so it carries its residual through unchanged.
     """
-    deviations = nodes_deviation(structure, xyz, params.forces)
-    deviations_seq = gather_padded(deviations, nodes_seq)
+    deviation_forces = nodes_deviation_force(structure, xyz, params.forces)
+    deviation_forces_seq = gather_padded(deviation_forces, nodes_seq)
     loads_seq = gather_padded(params.loads, nodes_seq)
 
-    return residual_trail_next(residuals_trail, deviations_seq, loads_seq)
+    return residual_trail_next(residuals_trail, deviation_forces_seq, loads_seq)
 
 
-def nodes_deviation(
+def nodes_deviation_force(
     structure: Structure,
     xyz: Float[Array, "nodes 3"],
     forces: Float[Array, "edges_deviation"],
@@ -509,14 +517,17 @@ def edges_force(
     order of the layout rather than of the edges. The slot each edge occupies
     reorders them in one gather, which drops the padding with them.
 
+    A slot is one flat number over the grid, and the counts that decode it into a
+    sequence and a trail are the structure's own, not the extent of the array being
+    read, so the two cannot disagree about what a slot means.
+
     The deviation block is a parameter, and the two concatenate in the edge order
     of the structure.
     """
     trail_forces = trails_force(residuals_trail, lengths)
 
-    # the unpacking rejects a stacked grid, which the gather would answer instead
-    sequences, trails = trail_forces.shape
-    slots = jnp.unravel_index(structure.trails.trail_edge_index, (sequences, trails))
+    grid_shape = (structure.num_sequences, structure.num_trails)
+    slots = jnp.unravel_index(structure.edges_sequence, grid_shape)
     forces_trail = trail_forces[slots]
 
     return jnp.concatenate((forces_trail, forces))

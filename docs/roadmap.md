@@ -39,7 +39,7 @@ array plus a boolean mask. An edge is a trail edge or a deviation edge and never
 both, and two arrays make that structurally true instead of a rule a validator
 has to enforce. `edges` is derived from them, so the three cannot drift apart.
 
-The concatenation is trail-major, and that order is canonical: `trail_edge_index`
+The concatenation is trail-major, and that order is canonical: `edges_sequence`
 indexes it, and any source with its own edge order — JSON, a mesh, a COMPAS CEM
 diagram — is permuted into it at the boundary.
 
@@ -92,11 +92,11 @@ This lands before the sentinel that phase 2 deferred, not after. What replaces t
 reserved value is a question asked of the plane of a trail edge, and a plane is keyed
 by that edge only here. See "A plane drives the edge it is given to".
 
-A sequence gains `trail_edge_index`, the trail edge outgoing from the node at each of its
-slots and `-1` where a slot has none. It is the slot-to-edge map `build_trails` already
-computes in order to invert it into `trail_edge_index`, kept rather than discarded, so
-neither can fall out of step with a trail that shifts, and the scan steps over the
-nodes and the edges of a sequence together.
+A sequence gains `edges`, the trail edge outgoing from the node at each of its slots and
+`-1` where a slot has none. It is the slot-to-edge map `build_trails` already computes in
+order to invert it into `Trails.edges_sequence`, kept rather than discarded, so neither
+can fall out of step with a trail that shifts, and the scan steps over the nodes and the
+edges of a sequence together.
 
 Two alternatives were rejected. Parameters shaped to the layout need no map at all,
 but a shift rewrites the layout and would silently re-address them, which is the
@@ -116,7 +116,7 @@ positions, edge forces, edge lengths, and residuals agree to 0.0, as do the grad
 with respect to lengths, planes, positions, and forces, under `jit`, `vmap`, and
 `jacobian`. A padded slot gathered at `-1` and wrapped to the last row, as a padded
 node key did, and what it computed there reached only the layout slots that the
-`trail_edge_index` gather drops. That wrap is gone; see "Padding addresses nothing".
+`edges_sequence` gather drops. That wrap is gone; see "Padding addresses nothing".
 
 ### A plane drives the edge it is given to
 
@@ -193,7 +193,7 @@ The line is drawn on the entity and not on whether a member happens to read `sel
 which is an accident that drifts as soon as someone adds a call. A quantity is a
 function and the sweep that orders them is the class. The functions that move out are
 the entity-level forms of the primitives that already sat at the bottom of the file —
-`trails_force` over `trail_force`, `nodes_deviation` and `nodes_residual` over
+`trails_force` over `trail_force`, `nodes_deviation_force` and `nodes_residual` over
 `nodes_resultant` — so the module gains one layer rather than a list.
 
 What stays does not stay because it needs the settings, since `equilibrium_state` and
@@ -253,9 +253,9 @@ the computation takes across them, so the containment runs that way and not the 
 
 ```python
 class Trails(NamedTuple):
-    sequences:    Sequence               # every sequence, stacked
-    trail_edge_index: Int[Array, "edges_trail"]
-    origin_nodes: Int[Array, "trails"]
+    sequences:      Sequence             # every sequence, stacked
+    edges_sequence: Int[Array, "edges_trail"]
+    nodes_sequence: Int[Array, "nodes"]
 ```
 
 The sequences are **stacked arrays and not a collection of `Sequence`**. A scan slices
@@ -271,27 +271,33 @@ is the view the scan presents to the step it drives, and `Trails.sequences` is t
 container with a leading sequence axis. It is the contract a stacked structure under
 `vmap` already carries.
 
-One name carries the bijection between slots and trail edges, in both directions.
-`Sequence.trail_edge_index` is keyed by a slot and holds the trail edge leaving it;
-`Trails.trail_edge_index` is keyed by the trail edge and holds the slot it occupies.
-The shared word is the entity the pair is about, and the container says which way it is
-being read. Both hold indices rather than endpoints, which an `edges` would not have
-said: `Structure.edges` holds node key pairs, so that word in two containers
-would have meant two things.
+The bijection between slots and trail edges is named for the direction each half runs
+in, keyed entity first. `Sequence.edges` is keyed by a slot and holds the trail edge
+leaving it; `Trails.edges_sequence` is keyed by the trail edge and holds the slot it
+occupies. Stacked, the first is what a structure reads as `sequence_edges`, so the pair
+a caller meets is `sequence_edges` against `edges_sequence`, which states which way each
+one runs without being told.
 
-Sharing the name puts the difference in the docstrings, which each state their key,
-their shape, and the direction. What keeps that from being a hazard is that the two
-cannot be confused silently: they differ in rank once the sequences are stacked, a grid
-against a flat array, and they can never hold the same number of entries, since a trail
-of `n` nodes fills `n` slots and owns `n - 1` edges. Substituting one for the other
-raises rather than answering.
+One name carried both directions first, `trail_edge_index` in either container, on the
+reading that the shared word is the entity the pair is about and the container says which
+way it is read. What kept that from being a hazard still holds: the two cannot be
+confused silently, since they differ in rank once the sequences are stacked, a grid
+against a flat array, and can never hold the same number of entries, a trail of `n` nodes
+filling `n` slots and owning `n - 1`. Substituting one for the other raises rather than
+answering.
+
+It was the wrong name anyway, and what it cost was never a wrong answer. A shared name
+puts the difference in the docstrings, so neither field can be read before a paragraph
+is, which is a convention living in prose rather than in what a caller types. The
+objection that sank `edges` the first time is real and is accepted rather than refuted:
+`Structure.edges` holds node key pairs, so the word does mean two things. What answers it
+is the receiver, since `sequence.edges` and `structure.edges` are read off different
+containers, and the stacked names never collide at all.
 
 Two other pairs were tried. `trail_edge_of_slot` with `slot_of_trail_edge` spells both
 halves and cannot be misread, at the cost of length. `trail_edge_index` with
 `slot_index` names what each holds and leaves the key to the shape, but reads as the
-mapping that `node_index` and `edge_index` already are, in the opposite direction. The
-shared name reads as the duality it is, which is what a caller holding one of them is
-usually thinking about.
+mapping that `node_index` and `edge_index` already are, in the opposite direction.
 
 The trail search and the layout stay separate functions, since only the second depends
 on the shifts and only the second runs again on alignment. `search_trails` finds the

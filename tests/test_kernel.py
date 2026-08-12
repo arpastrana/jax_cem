@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,7 +6,7 @@ import pytest
 from jax_cem.datastructures import Structure
 from jax_cem.datastructures import is_edge_deviation_direct
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.equilibrium.models import nodes_deviation
+from jax_cem.equilibrium.models import nodes_deviation_force
 from jax_cem.parameters import Parameters
 
 # ==============================================================================
@@ -97,13 +98,13 @@ def test_a_deviation_force_pushes_a_node_toward_the_far_end():
         [[0.0, 0.0, 0.0], [0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [1.0, -1.0, 0.0]],
     )
 
-    deviations = nodes_deviation(structure, xyz, jnp.array([1.0]))
+    deviation_forces = nodes_deviation_force(structure, xyz, jnp.array([1.0]))
 
     # node 0 sits at the tail of the edge and node 2 at its head
-    assert np.allclose(deviations[0], [1.0, 0.0, 0.0])
-    assert np.allclose(deviations[2], [-1.0, 0.0, 0.0])
+    assert np.allclose(deviation_forces[0], [1.0, 0.0, 0.0])
+    assert np.allclose(deviation_forces[2], [-1.0, 0.0, 0.0])
     # the support nodes carry no deviation edge
-    assert np.allclose(np.asarray(deviations)[[1, 3]], 0.0)
+    assert np.allclose(np.asarray(deviation_forces)[[1, 3]], 0.0)
 
 
 def test_an_indirect_deviation_edge_is_left_out_of_the_first_pass():
@@ -116,6 +117,25 @@ def test_an_indirect_deviation_edge_is_left_out_of_the_first_pass():
     assert direct.shape == (structure.num_edges_deviation,)
     assert direct.dtype == bool
     assert direct.all()
+
+
+def test_a_deviation_edge_across_two_sequences_is_indirect():
+    """
+    The mask tells the two kinds of deviation edge apart, edge by edge.
+
+    Notes
+    -----
+    Nothing else pins which edges those are. A mask that reported every edge
+    direct would leave the equilibrium unchanged, since the classification only
+    holds edges out of the first pass and the iteration puts them back, so this
+    reads the sequence of a node rather than an equilibrium computed from it.
+    Verified to bite by putting every node in the same sequence.
+    """
+    structure = crossing_trails()
+    direct = np.asarray(is_edge_deviation_direct(structure))
+
+    # edge (0, 3) joins two origin nodes; edge (1, 3) reaches back a sequence
+    assert direct.tolist() == [True, False]
 
 
 # ==============================================================================
@@ -199,7 +219,7 @@ def test_an_empty_slot_of_the_layout_takes_no_length():
     slot that no edge leaves.
     """
     structure = uneven_trails()
-    is_empty = np.asarray(structure.trails.sequences.trail_edge_index) < 0
+    is_empty = np.asarray(structure.sequence_edges) < 0
     assert np.any(is_empty), "no empty slot to exercise"
 
     xyz = jnp.zeros((int(structure.num_nodes), 3))
@@ -224,12 +244,8 @@ def test_a_padded_sequence_still_builds_every_trail_edge():
     edge rather than leave the result untouched.
     """
     structure = uneven_trails()
-    assert np.any(np.asarray(structure.trails.sequences.nodes) < 0), (
-        "no padding to exercise"
-    )
-    assert np.any(np.asarray(structure.trails.sequences.trail_edge_index) < 0), (
-        "no empty slot"
-    )
+    assert np.any(np.asarray(structure.sequence_nodes) < 0), "no padding to exercise"
+    assert np.any(np.asarray(structure.sequence_edges) < 0), "no empty slot"
 
     params = Parameters(
         xyz_origin=jnp.zeros((2, 3)),
@@ -268,9 +284,11 @@ def test_a_trail_edge_with_a_plane_ignores_its_length():
     planes = np.zeros((2, 6))
     planes[0, :] = [0.0, -2.0, 0.0, 0.0, 1.0, 0.0]
 
-    params = parameters(structure)._replace(
-        lengths=jnp.array([5.0, 1.0]),
-        planes=jnp.asarray(planes),
+    replaced = (jnp.array([5.0, 1.0]), jnp.asarray(planes))
+    params = eqx.tree_at(
+        lambda tree: (tree.lengths, tree.planes),
+        parameters(structure),
+        replace=replaced,
     )
 
     state = EquilibriumModel()(params, structure)
@@ -293,9 +311,11 @@ def test_a_normal_shorter_than_the_tolerance_is_no_plane():
     planes = np.zeros((2, 6))
     planes[0, :] = [0.0, -2.0, 0.0, 0.0, 1e-12, 0.0]
 
-    params = parameters(structure)._replace(
-        lengths=jnp.array([5.0, 1.0]),
-        planes=jnp.asarray(planes),
+    replaced = (jnp.array([5.0, 1.0]), jnp.asarray(planes))
+    params = eqx.tree_at(
+        lambda tree: (tree.lengths, tree.planes),
+        parameters(structure),
+        replace=replaced,
     )
 
     state = EquilibriumModel()(params, structure)

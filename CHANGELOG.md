@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `Trails.nodes_sequence`, the sequence that each node is put in equilibrium at,
+  inverted in `build_trails` out of the layout that reads a node off a slot. It is the
+  quantity `is_edge_deviation_direct` used to rebuild on every call, from a
+  `jnp.broadcast_to` of the sequence indices scattered into a `jnp.full` table, so that
+  function is now two gathers and a comparison and `jax_cem.datastructures.sequences`
+  needs neither `indices_beyond` nor `jnp` at all. It is stored rather than derived
+  because it is a function of the layout alone, and a shift replaces the layout whole;
+  the mask that reads it stays derived, since that also reads the deviation edges, which
+  are replaced apart from it.
+- Added `Structure.sequences`, `Structure.sequence_nodes`, `Structure.sequence_edges`,
+  `Structure.nodes_sequence`, and `Structure.edges_sequence`, which reach the layout in
+  one step where a caller used to write `structure.trails.sequences.nodes`. The two grids
+  are flat properties rather than one accessor for the container, since reading a grid off
+  that is two steps again. The four maps name the direction they run in, keyed entity
+  first: `sequence_nodes` and `sequence_edges` read a node and a trail edge off a slot,
+  and `nodes_sequence` and `edges_sequence` read a sequence and a slot back off those.
+- Added a test that a deviation edge spanning two sequences is reported indirect, edge by
+  edge, on the crossing fixture. Nothing pinned which edges those are: a mask that called
+  every edge direct passed all 94 tests, because the classification only holds edges out
+  of the first pass and the iteration puts them back, so no equilibrium moves. The count
+  in `test_align_trails_can_trade_one_indirect_edge_for_another` compared two numbers that
+  both collapsed to zero under that mask, and now asserts the count is nonzero first.
+- Added a test that the stored origin nodes are the first node the trail search found,
+  which replaces one that compared them against the layout. The origins are now read off
+  the layout, so that comparison restated the construction; the search is the reference
+  that can still disagree.
 - Added five tests for the padding that addresses nothing: that a sentinel leaves the
   index space and a real index does not, that a gather through one reads zero, that a
   scatter through one writes nothing, that a slot no trail edge leaves takes no length,
@@ -20,9 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trail edge outgoing from each. It names what the scan steps over, which was an
   anonymous pair of arrays reaching `sequence_equilibrium` as two arguments, and
   `Trails.sequences` stacks every one of them, so the scan is handed the container while
-  the step is handed one row of it and reads `sequence.nodes` and
-  `sequence.trail_edge_index` rather than unpacking a tuple by position. Its shapes describe
-  that row, which is the contract a stacked structure under `vmap` already carries.
+  the step is handed one row of it and reads `sequence.nodes` and `sequence.edges` rather
+  than unpacking a tuple by position. Its shapes describe that row, which is the contract
+  a stacked structure under `vmap` already carries.
 - Added an `__all__` to `jax_cem.equilibrium.models`, holding the model alone, and one
   to `jax_cem.equilibrium.states`, holding the three states, which the modules of
   `jax_cem.datastructures` already carry. The star imports that `jax_cem.equilibrium`
@@ -30,9 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imported symbol: `jnp`, `vmap`, `scan`, and `segment_sum` from the first, and `Array`,
   `Float`, and `NamedTuple` from the second. The functions stay reachable by their
   module path.
-- Added `Sequence.trail_edge_index`, the trail edge outgoing from the node at each slot of a
+- Added `Sequence.edges`, the trail edge outgoing from the node at each slot of a
   sequence and `-1` where a slot has none. It is the slot-to-edge map `build_trails`
-  already builds in order to invert it into `Trails.trail_edge_index`, kept rather than
+  already builds in order to invert it into `Trails.edges_sequence`, kept rather than
   discarded, so the two directions of one bijection cannot fall out of step with a trail
   that shifts. It sits beside `Sequence.nodes`, which is what lets the scan step over
   the node of a slot and the edge that leaves it together.
@@ -68,9 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deviation edges whose two nodes share a sequence. It replaces a stored field:
   which edges those are follows from the sequences, so deriving it means it cannot
   fall out of step with a trail that shifts.
-- Added `nodes_deviation`, which accumulates the deviation force at every node, and
+- Added `nodes_deviation_force`, which accumulates the deviation force at every node, and
   `nodes_residual`, which assembles the residual at every node from the edge forces
-  and the loads.
+  and the loads. The first names the quantity it returns and not the edges it reads,
+  since a deviation is a kind of edge rather than something a node carries; a residual
+  is already the quantity, so its name needs no such suffix.
 - Added an edge range check to `Structure.__check_init__`. `scipy` used to
   reject a negative node key on the caller's behalf while building the connectivity
   matrix; without the matrix a negative key would wrap and the accumulation would drop
@@ -122,6 +150,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Changed the masking of the indirect deviation forces to build the parameters it passes
+  on with `equinox.tree_at` rather than `NamedTuple._replace`, which is private, and to
+  bind the result to `params_pass` rather than rebinding the `params` argument. The pass
+  and the parameters it was handed are then two names, and what the scan closes over says
+  which one it reads. The three tests that reached for `_replace` build theirs the same
+  way; two of them replace a length and a plane together, which `tree_at` takes as a tuple
+  of leaves and which spelling the container out would have restated five fields to say.
+- Changed `edges_force` to decode a slot with the counts the structure states,
+  `num_sequences` and `num_trails`, rather than by unpacking the shape of the array it
+  then reads. The unpacking bound two counts to names that read as the things counted,
+  `sequences, trails = trail_forces.shape`, and a count carries `num_`; naming it that way
+  is what shows the structure already answers it. The unpacking also served as a rank
+  guard against a stacked grid, which the shape annotation on the arguments now rejects
+  one step earlier, though only while the import hook that checks it is installed. That
+  is how the suite runs, and a stacked grid cannot arrive here from the one caller, since
+  a batch is taken by `vmap` and the function sees one structure at a time.
+- Changed `origin_nodes` from a field of `Trails`, forwarded by a property, into a field
+  of `Structure` that `build_trails` returns beside the trails. A shift rewrites the
+  layout and leaves the origins alone, so they are not part of the layout, and holding
+  them there was defensive against a drift no shift could cause. `align_trails` replaces
+  both fields together, which is what turns `test_a_shift_leaves_the_origin_nodes_alone`
+  back into a check: discarding the recomputed origins would have made it assert only
+  that the transform failed to reach a field.
+- Changed the origin nodes to be read off the layout, at the first slot each column
+  occupies, rather than walked out of the ragged trails one tuple at a time. A shift moves
+  a trail down its column without reordering it, so that slot holds the node the trail
+  starts at whatever the shift, and the read is one `argmax` over the grid.
+  `sequences_from_trails` returns the grid alone, since nothing else wanted the origins it
+  used to compute beside it.
 - Changed the trail edge that a plane drives to be marked by the plane rather than by a
   zero length. `sequence_equilibrium` used to ask whether an edge had a length of zero,
   which read a sentinel out of the array an optimizer varies: a length walked onto zero
@@ -219,14 +276,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   jaxpr equations and 349 ms of compile at 5 sequences and 15370 and 4376 ms at 60,
   where the scan holds 124 equations and 184 ms at any size. The answers are identical
   and the run time is a wash, so what a collection costs is the graph and the compile.
-- Changed `Sequences.edges` and `Sequences.edges_slot` to `Sequence.trail_edge_index` and
-  `Trails.trail_edge_index`, one name carrying the bijection between slots and trail
-  edges in both directions: keyed by a slot it holds the edge, and keyed by the edge it
-  holds the slot. Both hold indices rather than endpoints, which `edges` did not say,
-  since `Structure.edges` holds node key pairs. The docstrings carry the
-  direction, the key, and the shape, and the two cannot be confused silently: they
-  differ in rank once the sequences are stacked and can never hold the same number of
-  entries, so substituting one for the other raises.
+- Changed `Sequences.edges` and `Sequences.edges_slot` to `Sequence.edges` and
+  `Trails.edges_sequence`, the two directions of the bijection between slots and trail
+  edges: keyed by a slot the first holds the edge, and keyed by the edge the second holds
+  the slot. Both hold indices rather than endpoints, unlike `Structure.edges`, which holds
+  node key pairs; the container is what says which is meant, and the stacked forms a
+  caller reads say it outright, `sequence_edges` against `edges_sequence`.
+
+  This passed through `trail_edge_index` for both, one name carrying the bijection in
+  either direction on the grounds that the two cannot be confused silently: they differ
+  in rank once the sequences are stacked and can never hold the same number of entries,
+  so substituting one for the other raises. That holds, and it was still the wrong name.
+  What a shared name costs is not a wrong answer but a docstring paragraph that has to
+  be read before either field can be used, which is a convention living in prose rather
+  than in what a caller types.
 - Changed `Structure.__init__` to convert once, on the way out, rather than
   coercing every argument on the way in and rebinding it. The four `np.asarray` calls
   were no-ops on the NumPy arrays the signature declares, since `np.asarray` returns an
@@ -274,7 +337,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one or driving the control flow they configure.
 - Changed `EquilibriumModel` to hold the sweep alone, moving the nine quantities it
   computed to functions of `jax_cem.equilibrium.models`: `nodes_equilibrium`,
-  `nodes_deviation`, `nodes_position`, `nodes_length_plane`, `node_length_plane`,
+  `nodes_deviation_force`, `nodes_position`, `nodes_length_plane`, `node_length_plane`,
   `edges_length`, `nodes_residual`, `edges_force`, and `trails_force`. The class held
   seventeen members and one of them read a setting, `__call__`; every other mention of
   `self` was a lookup of a sibling, which is a namespace rather than an object. Six
@@ -342,7 +405,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   thing across the Formax libraries. The trail residual stays off `EquilibriumState`:
   the force in a trail edge and the vector of that edge already hold it.
 - Changed `sequences_edges` and `sequences_edges_indices` to one
-  `Trails.trail_edge_index`, the slot of the layout that each trail edge occupies. The pair
+  `Trails.edges_sequence`, the slot of the layout that each trail edge occupies. The pair
   mapped a slot to an edge and then selected the occupied slots, so reading a per-slot
   quantity back in edge order took a gather and a scatter; inverting the map once, in
   the constructor, turns it into a single gather. The old name was wrong

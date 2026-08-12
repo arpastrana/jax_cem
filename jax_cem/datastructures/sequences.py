@@ -5,13 +5,10 @@ The sequences an equilibrium steps through, and what sharing one settles.
 from typing import TYPE_CHECKING
 from typing import NamedTuple
 
-import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 from jaxtyping import Bool
 from jaxtyping import Int
-
-from jax_cem.datastructures.indexing import indices_beyond
 
 if TYPE_CHECKING:
     from jax_cem.datastructures.structures import Structure
@@ -32,17 +29,20 @@ class Sequence(NamedTuple):
     nodes :
         The node key of every trail in the sequence, where ``-1`` marks a trail
         that does not reach it.
-    trail_edge_index :
+    edges :
         The trail edge outgoing from every one of those nodes, where ``-1`` marks
         a node that none leaves.
 
     Notes
     -----
     Both fields are keyed by slot and hold the entity they name: a slot is one node
-    of one trail, and the trail edge that leaves it. `Trails` carries a field of the
-    same name keyed the other way round, by the trail edge, holding the slot it
-    occupies; the shapes tell them apart, `"trails"` here against `"edges_trail"`
-    there, and so does the rank once these are stacked into a grid.
+    of one trail, and the trail edge that leaves it. `Trails.edges_sequence` runs
+    the other way round, keyed by the trail edge and holding the slot it occupies.
+
+    These are trail edges and hold the key of one, where `Structure.edges` holds a
+    pair of node keys per edge. The container says which is meant, and stacking
+    keeps that: `Trails.sequences` gathers these into the grids a structure reads as
+    `sequence_nodes` and `sequence_edges`.
 
     A trail edge joins the node a trail holds in one sequence to the node it holds
     in the next, so a trail of ``n`` nodes has ``n - 1`` edges and its last slot
@@ -55,7 +55,7 @@ class Sequence(NamedTuple):
     """
 
     nodes: Int[Array, "trails"]
-    trail_edge_index: Int[Array, "trails"]
+    edges: Int[Array, "trails"]
 
 
 def is_edge_deviation_direct(
@@ -77,29 +77,29 @@ def is_edge_deviation_direct(
     Notes
     -----
     A deviation edge that spans two sequences is indirect, and only the iterative
-    equilibrium resolves it. Which edges those are follows from the layout, so it
-    is computed rather than stored, and it cannot fall out of step with a trail
-    that shifts.
+    equilibrium resolves it. Which edges those are follows from the layout and from
+    the deviation edges, which are held apart, so it is computed rather than stored
+    and cannot fall out of step with a trail that shifts.
+
+    The sequence of a node is read off the layout rather than searched for in it,
+    so an edge costs two gathers and a comparison.
     """
-    sequences = structure.trails.sequences.nodes
-    rows = jnp.broadcast_to(
-        jnp.arange(structure.num_sequences)[:, None],
-        sequences.shape,
-    )
+    nodes_sequence = structure.nodes_sequence
 
-    nodes = indices_beyond(sequences, structure.num_nodes)
-    sequence_of = jnp.full(structure.num_nodes, -1, dtype=int)
-    sequence_of = sequence_of.at[nodes].set(rows, mode="drop")
+    nodes_u = structure.edges_deviation[:, 0]
+    nodes_v = structure.edges_deviation[:, 1]
+    sequence_u = nodes_sequence[nodes_u]
+    sequence_v = nodes_sequence[nodes_v]
 
-    nodes_u, nodes_v = structure.edges_deviation[:, 0], structure.edges_deviation[:, 1]
+    is_direct = sequence_u == sequence_v
 
-    return sequence_of[nodes_u] == sequence_of[nodes_v]
+    return is_direct
 
 
 def sequences_from_trails(
     trail_nodes: list[tuple[int, ...]],
     shifts: Int[np.ndarray, "trails"] | None = None,
-) -> tuple[Int[np.ndarray, "sequences trails"], Int[np.ndarray, "trails"]]:
+) -> Int[np.ndarray, "sequences trails"]:
     """
     Lay out trails into the sequences that the equilibrium scan steps through.
 
@@ -116,8 +116,6 @@ def sequences_from_trails(
     sequences :
         The node key at each sequence of each trail, where ``-1`` marks a
         sequence that a shifted or shorter trail does not reach.
-    origin_nodes :
-        The first node of each trail, column-aligned with the sequences.
 
     Notes
     -----
@@ -143,6 +141,4 @@ def sequences_from_trails(
         for offset, node in enumerate(trail):
             sequences[shift + offset][index] = node
 
-    origin_nodes = np.asarray([trail[0] for trail in trail_nodes], dtype=int)
-
-    return sequences, origin_nodes
+    return sequences

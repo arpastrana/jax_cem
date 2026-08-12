@@ -78,11 +78,10 @@ def test_trail_search_reproduces_the_reference_sequences(topology):
     # the shift of a trail is a choice the diagram made, so read it off it
     shifts = [int(np.nonzero(reference == trail[0])[0][0]) for trail in trail_nodes]
 
-    sequences, origin_nodes = sequences_from_trails(trail_nodes, np.asarray(shifts))
+    sequences = sequences_from_trails(trail_nodes, np.asarray(shifts))
 
     assert sequences.shape == reference.shape
     assert columns(sequences) == columns(reference)
-    assert sorted(origin_nodes.tolist()) == sorted(trail[0] for trail in trail_nodes)
 
 
 def test_every_node_lands_on_exactly_one_trail(braced_tower_2d):
@@ -123,8 +122,8 @@ def test_a_slot_names_the_edge_that_leaves_its_node(braced_tower_2d):
     is matched as a pair of nodes rather than in the order the structure keeps.
     """
     structure = structure_from_topology(braced_tower_2d)
-    nodes = np.asarray(structure.trails.sequences.nodes)
-    edges = np.asarray(structure.trails.sequences.trail_edge_index)
+    nodes = np.asarray(structure.sequence_nodes)
+    edges = np.asarray(structure.sequence_edges)
     edges_trail = np.asarray(structure.edges_trail)
 
     for row, pair in enumerate(zip(nodes[:-1], nodes[1:])):
@@ -135,24 +134,27 @@ def test_a_slot_names_the_edge_that_leaves_its_node(braced_tower_2d):
             assert set(edges_trail[edge]) == {sequence[column], sequence_next[column]}
 
 
-def test_the_origin_nodes_agree_with_the_layout_that_holds_them(
+def test_the_origin_nodes_are_the_first_node_the_search_found(
     topology_shifted_sequences,
 ):
     """
-    The stored origin nodes are the first node every column of the layout holds.
+    The stored origin nodes are the node every trail starts at, column by column.
 
     Notes
     -----
-    They are read off the trails and the layout is built from the same trails, so
-    this is the one pin that the two cannot state different things.
+    The origins are read off the layout, so the layout cannot disagree with them
+    and a test that compares the two states nothing. What can disagree is the
+    search that fed the layout, which is the reference this holds them to, on a
+    topology whose trails are shifted and so do not start at the first sequence.
     """
     structure = structure_from_topology(topology_shifted_sequences)
-    nodes = np.asarray(structure.trails.sequences.nodes)
+    nodes, supports, edges_trail, _ = trail_inputs(topology_shifted_sequences)
+
+    trail_nodes = search_trails(nodes, supports, edges_trail)
     origins = np.asarray(structure.origin_nodes)
+    expected = [trail[0] for trail in trail_nodes]
 
-    first = np.argmax(nodes >= 0, axis=0)
-
-    assert np.array_equal(origins, nodes[first, np.arange(nodes.shape[-1])])
+    assert origins.tolist() == expected
 
 
 def test_a_shift_leaves_the_origin_nodes_alone(topology_shifted_sequences):
@@ -162,9 +164,7 @@ def test_a_shift_leaves_the_origin_nodes_alone(topology_shifted_sequences):
     structure = structure_from_topology(topology_shifted_sequences)
     aligned = align_trails(structure)
 
-    assert (
-        aligned.trails.sequences.nodes.shape != structure.trails.sequences.nodes.shape
-    )
+    assert aligned.sequence_nodes.shape != structure.sequence_nodes.shape
     assert np.array_equal(
         np.asarray(structure.origin_nodes),
         np.asarray(aligned.origin_nodes),
@@ -176,8 +176,8 @@ def test_the_slot_of_an_edge_reads_the_edge_back(topology_shifted_sequences):
     The two directions of the slot map agree, on a layout that pads and shifts.
     """
     structure = structure_from_topology(topology_shifted_sequences)
-    edges = np.asarray(structure.trails.sequences.trail_edge_index)
-    slots = np.asarray(structure.trails.trail_edge_index)
+    edges = np.asarray(structure.sequence_edges)
+    slots = np.asarray(structure.edges_sequence)
     trail_edges = np.arange(structure.num_edges_trail)
 
     # the last sequence a trail reaches holds its support, which no edge leaves
@@ -198,8 +198,8 @@ def test_align_trails_reproduces_the_reference_layout(topology_shifted_sequences
     reference = reference_sequences(topology_shifted_sequences)
     aligned = align_trails(structure_from_topology(topology_shifted_sequences))
 
-    assert aligned.trails.sequences.nodes.shape == reference.shape
-    assert columns(np.asarray(aligned.trails.sequences.nodes)) == columns(reference)
+    assert aligned.sequence_nodes.shape == reference.shape
+    assert columns(np.asarray(aligned.sequence_nodes)) == columns(reference)
 
 
 def test_aligning_twice_changes_nothing(topology_shifted_sequences):
@@ -210,8 +210,8 @@ def test_aligning_twice_changes_nothing(topology_shifted_sequences):
     twice = align_trails(once)
 
     assert np.array_equal(
-        np.asarray(once.trails.sequences.nodes),
-        np.asarray(twice.trails.sequences.nodes),
+        np.asarray(once.sequence_nodes),
+        np.asarray(twice.sequence_nodes),
     )
 
 
@@ -223,8 +223,8 @@ def test_align_trails_leaves_an_aligned_structure_alone(threebar_funicular):
     aligned = align_trails(structure)
 
     assert np.array_equal(
-        np.asarray(structure.trails.sequences.nodes),
-        np.asarray(aligned.trails.sequences.nodes),
+        np.asarray(structure.sequence_nodes),
+        np.asarray(aligned.sequence_nodes),
     )
 
 
@@ -239,9 +239,11 @@ def test_align_trails_can_trade_one_indirect_edge_for_another(braced_tower_2d):
         return int(np.sum(~np.asarray(is_edge_deviation_direct(candidate))))
 
     assert (
-        np.asarray(aligned.trails.sequences.nodes).shape[0]
-        > np.asarray(structure.trails.sequences.nodes).shape[0]
+        np.asarray(aligned.sequence_nodes).shape[0]
+        > np.asarray(structure.sequence_nodes).shape[0]
     )
+    # otherwise the two counts agree at zero and the trade is not exercised
+    assert indirect(structure) > 0
     assert indirect(aligned) == indirect(structure)
 
 
@@ -250,11 +252,11 @@ def test_align_trails_returns_a_new_structure(topology_shifted_sequences):
     The transform does not touch the structure it is given.
     """
     structure = structure_from_topology(topology_shifted_sequences)
-    before = np.asarray(structure.trails.sequences.nodes).copy()
+    before = np.asarray(structure.sequence_nodes).copy()
 
     align_trails(structure)
 
-    assert np.array_equal(np.asarray(structure.trails.sequences.nodes), before)
+    assert np.array_equal(np.asarray(structure.sequence_nodes), before)
 
 
 # ==============================================================================
