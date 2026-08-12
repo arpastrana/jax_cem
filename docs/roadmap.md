@@ -88,9 +88,9 @@ genuinely zero. Edgewise the second meaning is gone, and the trailing `1` axis w
 it, which leaves the parameters split by entity: `xyz` and `loads` per node, `forces`,
 `lengths`, and `planes` per edge.
 
-This lands before the sentinel that phase 2 deferred, not after. The mask that
-replaces the reserved value is one flag per trail edge, so it has a shape only once
-the parameters it masks have one.
+This lands before the sentinel that phase 2 deferred, not after. What replaces the
+reserved value is a question asked of the plane of a trail edge, and a plane is keyed
+by that edge only here. See "A plane drives the edge it is given to".
 
 A sequence gains `trail_edge_index`, the trail edge outgoing from the node at each of its
 slots and `-1` where a slot has none. It is the slot-to-edge map `build_trails` already
@@ -117,6 +117,48 @@ with respect to lengths, planes, positions, and forces, under `jit`, `vmap`, and
 `jacobian`. A padded slot gathered at `-1` and wrapped to the last row, as a padded
 node key did, and what it computed there reached only the layout slots that the
 `trail_edge_index` gather drops. That wrap is gone; see "Padding addresses nothing".
+
+### A plane drives the edge it is given to
+
+A trail edge is positioned by a length or by a plane, and which of the two the kernel
+reads is asked of `Parameters.planes`, through `is_plane_absent`. An edge given a plane
+is driven by it and the length of that edge goes unread.
+
+The question used to be asked of the length, as `length == 0.0`. That reserved a value
+in the one array an optimizer varies, and reserved a legal one: a zero-length trail edge
+cannot be expressed, and worse, a length walked onto zero hands its edge over to a plane
+mid-optimization. Nothing reports the handover, because `jnp.where` routes the cotangent
+to the branch it took, so the derivative with respect to that length is zero exactly
+where the meaning of the parameter changes. A zero normal is not the same kind of value:
+it is a plane that points nowhere, which is degenerate rather than something an author
+means, and no optimizer walks onto it while doing its job.
+
+An earlier draft of this roadmap proposed a flag per trail edge on the structure
+instead, and deferred the sentinel until there was somewhere to put it, since nothing
+derives such a flag and it would arrive as a fifth constructor argument. Asking the
+plane needs neither. The fact is already in the parameters, so the flag would be a third
+array that has to agree with the two it describes, and the authoring decision the
+deferral waited on is not one this question asks.
+
+The zero test lives in one place. `is_plane_absent` is asked both by the branch that
+selects the plane and by the guard inside `node_length_plane` that keeps a degenerate
+plane from dividing, so the two cannot answer differently and leave an edge whose plane
+one reads and the other treats as absent. The normal arrives unnormalized — the scale of
+it cancels in the length — so it is compared against zero within an absolute tolerance
+and not exactly. There is no second scale to be relative to, and an exact test reads a
+normal of `1e-12` as a plane and puts the node on it, which moves the node by that same
+order.
+
+Two things this does not settle. The branch still reads a parameter rather than the
+structure, so a plane normal optimized toward zero can reach the same discontinuity;
+what changed is that the value it reaches is degenerate rather than legal, and the
+tolerance puts the crossing where the plane arithmetic means nothing anyway. And both
+lengths are still computed at every slot, one of which is discarded.
+
+The precedence this gives a plane over a length is the one `tests/converters.py` already
+applied, since it zeroed the length of any edge it gave a plane to, so no structure built
+from a COMPAS CEM diagram changes. An edge handed both directly through `Parameters` now
+takes its plane where it used to take its length.
 
 ### Only the origin positions are parameters
 
@@ -353,9 +395,11 @@ algorithm against the frozen baselines, on modern dependencies, before phase 2
 rewrites trail sequencing. That run is the only reference the rewrite can be
 diffed against.
 
-Phases 1 through 4 are closed. Phase 2 kept the plane sentinel and auxiliary trails,
-which are the same deferral rather than two: both are authoring decisions with nowhere
-to live until the constructor settles.
+Phases 1 through 4 are closed. Phase 2 kept the plane sentinel and auxiliary trails and
+grouped them as one deferral, on the reading that both are authoring decisions with
+nowhere to live until the constructor settles. They were two. The sentinel asks nothing
+of an author and is closed; see "A plane drives the edge it is given to". Auxiliary
+trails still want the decision, and are the one core item left open.
 
 ### Phase 1 — Packaging and CI
 
@@ -470,11 +514,14 @@ hold it. Assembling rather than scattering is what lets a free node report that 
 sweep left it out of equilibrium, which is the measure the iteration is driving down.
 
 The sentinel that encodes a plane-driven trail edge as `length == 0.0` is deferred
-rather than fixed. Whether a trail edge is driven by a length or by a plane is a fact
-about the model and not a reserved value in the parameters, so the mask belongs on the
-structure — but nothing derives it, which means a fifth constructor argument. That is
-the same question as auxiliary trails and the shifts before them: an authoring decision
-with nowhere to live. It waits for the constructor to settle.
+rather than fixed, on the reading that whether an edge is driven by a length or by a
+plane is a fact about the model and so belongs on the structure as a mask — which
+nothing derives, which means a fifth constructor argument, which is the same authoring
+decision with nowhere to live as auxiliary trails and the shifts before them.
+
+It is fixed after phase 4, and needed none of that. The fact is in the parameters
+already, because a plane is given only to the edge it drives, so the question is asked
+of the plane rather than stored beside it. See "A plane drives the edge it is given to".
 
 The six topology fixtures are **not** ported to the array constructor here, which is a
 change from an earlier draft of this phase. They stay COMPAS CEM diagrams,

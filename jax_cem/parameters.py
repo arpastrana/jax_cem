@@ -23,8 +23,8 @@ class Parameters(NamedTuple):
         The force in every deviation edge. A trail edge force is an output,
         recovered from the trail residual that passes through it.
     lengths :
-        The signed length of every trail edge, where zero hands the length over
-        to the plane of the edge.
+        The signed length of every trail edge, read on the edges that carry no
+        plane.
     planes :
         The origin and the normal of the plane that positions the node at the far
         end of every trail edge, where a zero normal marks an edge without one.
@@ -35,6 +35,11 @@ class Parameters(NamedTuple):
     by the node that edge leaves. Every trail ends at a support, where no trail
     edge leaves and neither of them is read, so a nodewise array would spend a row
     on each one.
+
+    A plane drives its edge and the length of that edge goes unread, so an edge
+    given both takes the plane. Which of the two drives an edge is asked of the
+    plane, whose zero is a degenerate normal, rather than of the length, whose
+    zero is a length like any other and is a value an optimizer can walk onto.
     """
 
     xyz_origin: Float[Array, "trails 3"]

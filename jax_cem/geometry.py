@@ -1,6 +1,37 @@
 import jax.numpy as jnp
 from jaxtyping import Array
+from jaxtyping import Bool
 from jaxtyping import Float
+
+TOLERANCE_NORMAL = 1e-8
+
+
+def is_plane_absent(plane: Float[Array, "*planes 6"]) -> Bool[Array, "*planes"]:
+    """
+    Whether a plane has a normal too short to point anywhere.
+
+    Parameters
+    ----------
+    plane :
+        The origin and the normal of a plane.
+
+    Returns
+    -------
+    is_absent :
+        Whether the plane is one in name only.
+
+    Notes
+    -----
+    The normal arrives unnormalized, so it is compared against zero within an
+    absolute tolerance rather than exactly, and a plane meant to be read has to
+    carry a normal clear of it. Every use of a plane asks this one question, so
+    the branch that reads a plane and the guard inside the arithmetic that reads
+    it cannot come to different answers.
+    """
+    normal = plane[..., 3:]
+    is_short = jnp.abs(normal) <= TOLERANCE_NORMAL
+
+    return jnp.all(is_short, axis=-1)
 
 
 def vector_length(v: Float[Array, "3"]) -> Float[Array, ""]:

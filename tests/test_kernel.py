@@ -249,6 +249,62 @@ def test_a_padded_sequence_still_builds_every_trail_edge():
 
 
 # ==============================================================================
+# Tests - Trail edge lengths
+# ==============================================================================
+
+
+def test_a_trail_edge_with_a_plane_ignores_its_length():
+    """
+    A plane drives the edge it is given to, and the length of that edge goes unread.
+
+    Notes
+    -----
+    The length here would carry the node five units away, and the plane sits two
+    units off the origin, so the node lands on one or the other and not on both.
+    Verified to bite by asking the length whether it is zero, which is what the
+    plane used to be reached through.
+    """
+    structure = two_trails()
+    planes = np.zeros((2, 6))
+    planes[0, :] = [0.0, -2.0, 0.0, 0.0, 1.0, 0.0]
+
+    params = parameters(structure)._replace(
+        lengths=jnp.array([5.0, 1.0]),
+        planes=jnp.asarray(planes),
+    )
+
+    state = EquilibriumModel()(params, structure)
+
+    assert np.allclose(np.asarray(state.xyz)[1, 1], -2.0)
+
+
+def test_a_normal_shorter_than_the_tolerance_is_no_plane():
+    """
+    A normal that rounds to zero leaves its edge to the length instead.
+
+    Notes
+    -----
+    The normal arrives unnormalized, so how short it is says nothing about what it
+    means, and only a tolerance separates one meant to be read from one left at
+    zero. Verified to bite by comparing the normal against zero exactly, which
+    takes this plane for a real one and puts the node on it.
+    """
+    structure = two_trails()
+    planes = np.zeros((2, 6))
+    planes[0, :] = [0.0, -2.0, 0.0, 0.0, 1e-12, 0.0]
+
+    params = parameters(structure)._replace(
+        lengths=jnp.array([5.0, 1.0]),
+        planes=jnp.asarray(planes),
+    )
+
+    state = EquilibriumModel()(params, structure)
+    xyz = np.asarray(state.xyz)
+
+    assert np.allclose(np.linalg.norm(xyz[1] - xyz[0]), 5.0)
+
+
+# ==============================================================================
 # Tests - Rejected structures
 # ==============================================================================
 

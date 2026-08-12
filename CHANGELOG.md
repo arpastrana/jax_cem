@@ -122,6 +122,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Changed the trail edge that a plane drives to be marked by the plane rather than by a
+  zero length. `sequence_equilibrium` used to ask whether an edge had a length of zero,
+  which read a sentinel out of the array an optimizer varies: a length walked onto zero
+  hands the edge over to its plane mid-optimization, and the gradient with respect to
+  that length is zero at the crossing, so nothing reports the handover. A zero normal is
+  a degenerate plane rather than a value anyone means, so the question is now asked of
+  the plane. The precedence this gives a plane over a length is the one the COMPAS CEM
+  converter already applied when it zeroed the length of an edge it gave a plane to, so
+  no structure built through it changes. An edge handed both directly through
+  `Parameters` now takes its plane where it used to take its length.
+- Changed the zero test on a plane normal into `is_plane_absent`, which both the branch
+  that selects the plane and the guard inside `node_length_plane` now ask, so the two
+  cannot answer differently and leave an edge whose plane is read by one and treated as
+  degenerate by the other. The normal is compared against zero within an absolute
+  tolerance, since it arrives unnormalized and an exact test takes a normal of `1e-12`
+  for a real plane and puts the node on it, which moves the node by the same order.
 - Changed six functions of `jax_cem.equilibrium.models` for legibility, with every
   value and gradient unchanged: `nodes_resultant` names its two scatters `at_tail` and
   `at_head` rather than subtracting one call from another across five lines;

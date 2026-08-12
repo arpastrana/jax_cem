@@ -15,6 +15,7 @@ from jax_cem.datastructures import is_edge_deviation_direct
 from jax_cem.equilibrium import EquilibriumSequenceState
 from jax_cem.equilibrium import EquilibriumState
 from jax_cem.equilibrium import EquilibriumTrailsState
+from jax_cem.geometry import is_plane_absent
 from jax_cem.geometry import vector_length
 from jax_cem.geometry import vector_normalized
 from jax_cem.parameters import Parameters
@@ -306,7 +307,8 @@ class EquilibriumModel:
         planes_seq = gather_padded(params.planes, sequence.trail_edge_index)
         lengths_plane = nodes_length_plane(planes_seq, xyz_seq, residuals_trail)
         lengths_signed = gather_padded(params.lengths, sequence.trail_edge_index)
-        lengths_seq = jnp.where(lengths_signed != 0.0, lengths_signed, lengths_plane)
+        is_plane_missing = is_plane_absent(planes_seq)
+        lengths_seq = jnp.where(is_plane_missing, lengths_signed, lengths_plane)
 
         # Position of the next node
         xyz_seq_new = nodes_position(xyz_seq, residuals_trail, lengths_seq)
@@ -426,7 +428,7 @@ def node_length_plane(
     normal = plane[3:]
 
     # a zero normal points nowhere to project onto, so substitute before dividing
-    is_normal_zero = jnp.allclose(normal, 0.0)
+    is_normal_zero = is_plane_absent(plane)
     normal_safe = jnp.where(is_normal_zero, jnp.ones_like(normal), normal)
     offset_plane = jnp.where(is_normal_zero, 0.0, normal_safe @ (origin - xyz))
 
