@@ -8,7 +8,7 @@ from jaxtyping import Float
 # ------------------------------------------------------------------------------
 
 
-class ParameterState(NamedTuple):
+class Parameters(NamedTuple):
     """
     The parameters of an equilibrium model.
 
@@ -35,10 +35,6 @@ class ParameterState(NamedTuple):
     by the node that edge leaves. Every trail ends at a support, where no trail
     edge leaves and neither of them is read, so a nodewise array would spend a row
     on each one.
-
-    A sweep positions every node but the origins, so the origins are the only
-    positions it takes. Their order is the order of the trails, which
-    `EquilibriumStructure.origin_nodes` states.
     """
 
     xyz_origin: Float[Array, "trails 3"]

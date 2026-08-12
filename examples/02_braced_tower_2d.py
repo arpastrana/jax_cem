@@ -16,8 +16,8 @@ from compas_cem.equilibrium import static_equilibrium_numpy
 from compas_cem.plotters import Plotter
 
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.datastructures import EquilibriumStructure
-from jax_cem.parameters import ParameterState
+from jax_cem.datastructures import Structure
+from jax_cem.parameters import Parameters
 from jax_cem.datastructures import form_from_eqstate
 
 from jax.tree_util import tree_map
@@ -124,8 +124,8 @@ form = static_equilibrium_numpy(topology, eta=1e-9, tmax=tmax, verbose=False)
 # Compute a state of static equilibrium with JAX CEM
 # ------------------------------------------------------------------------------
 
-structure = EquilibriumStructure.from_topology_diagram(topology)
-parameters = ParameterState.from_topology_diagram(topology)
+structure = Structure.from_topology_diagram(topology)
+parameters = Parameters.from_topology_diagram(topology)
 # model = EquilibriumModel.from_topology_diagram(topology)
 model = EquilibriumModel(tmax=tmax, verbose=True)
 eqstate = model(parameters, structure)

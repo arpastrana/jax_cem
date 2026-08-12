@@ -15,11 +15,11 @@ same reason.
 
 ### The structure is built from arrays
 
-`EquilibriumStructure` is constructed from arrays, not from a declarative layer of
+`Structure` is constructed from arrays, not from a declarative layer of
 `Node` and `Edge` objects.
 
 ```python
-class EquilibriumStructure(AbstractStructure):
+class Structure(AbstractStructure):
     nodes:           Int[Array, "nodes"]
     supports:        Int[Array, "nodes_fixed"]
     edges_trail:     Int[Array, "edges_trail 2"]
@@ -39,7 +39,7 @@ array plus a boolean mask. An edge is a trail edge or a deviation edge and never
 both, and two arrays make that structurally true instead of a rule a validator
 has to enforce. `edges` is derived from them, so the three cannot drift apart.
 
-The concatenation is trail-major, and that order is canonical: `sequences_edges`
+The concatenation is trail-major, and that order is canonical: `trail_edge_index`
 indexes it, and any source with its own edge order — JSON, a mesh, a COMPAS CEM
 diagram — is permuted into it at the boundary.
 
@@ -58,7 +58,7 @@ per-edge parameter built against the earlier order would then address the wrong 
 silently. The order stays fixed and the distinction stays a mask.
 
 Trail-edge forces are outputs, recovered
-from the residuals, so `ParameterState.forces` covers only the deviation block;
+from the residuals, so `Parameters.forces` covers only the deviation block;
 the trail entries the old parameter array carried were overwritten on every call
 and never read.
 
@@ -69,7 +69,7 @@ parameters in one object only to separate them again one function later.
 
 ### Trail edge lengths and planes are edgewise
 
-`ParameterState.lengths` and `ParameterState.planes` are keyed by the trail edge each
+`Parameters.lengths` and `Parameters.planes` are keyed by the trail edge each
 one drives, shaped `"edges_trail"` and `"edges_trail 6"`, not by the node that edge
 leaves.
 
@@ -92,11 +92,11 @@ This lands before the sentinel that phase 2 deferred, not after. The mask that
 replaces the reserved value is one flag per trail edge, so it has a shape only once
 the parameters it masks have one.
 
-`Sequences` gains `edges`, the trail edge outgoing from the node at each slot of the
-layout and `-1` where a slot has none. It is the slot-to-edge map `build_sequences`
-already computes and inverts into `edges_slot`, kept rather than discarded, so neither
-can fall out of step with a trail that shifts, and the scan steps over the node row
-and the edge row of a sequence together.
+A sequence gains `trail_edge_index`, the trail edge outgoing from the node at each of its
+slots and `-1` where a slot has none. It is the slot-to-edge map `build_trails` already
+computes in order to invert it into `trail_edge_index`, kept rather than discarded, so
+neither can fall out of step with a trail that shifts, and the scan steps over the
+nodes and the edges of a sequence together.
 
 Two alternatives were rejected. Parameters shaped to the layout need no map at all,
 but a shift rewrites the layout and would silently re-address them, which is the
@@ -114,13 +114,13 @@ fills the arrays has to walk the trails rather than read the edge array.
 The change is exact. Measured against the nodewise kernel on the six fixtures: node
 positions, edge forces, edge lengths, and residuals agree to 0.0, as do the gradients
 with respect to lengths, planes, positions, and forces, under `jit`, `vmap`, and
-`jacobian`. A padded slot gathers at `-1` and wraps to the last row, as a padded node
-key already does, and what it computes there reaches only the dummy position row and
-the layout slots that the `edges_slot` gather drops.
+`jacobian`. A padded slot gathered at `-1` and wrapped to the last row, as a padded
+node key did, and what it computed there reached only the layout slots that the
+`trail_edge_index` gather drops. That wrap is gone; see "Padding addresses nothing".
 
 ### Only the origin positions are parameters
 
-`ParameterState.xyz_origin` holds the position of the origin node of every trail,
+`Parameters.xyz_origin` holds the position of the origin node of every trail,
 shaped `"trails 3"`, where the field was `xyz` over every node.
 
 A sweep computes the position of every node it steps onto, and the node array it steps
@@ -131,7 +131,7 @@ the same oversizing the lengths and the planes carried, in the other entity.
 The axis is `trails` and not a node subset, because the array is the initial value of
 the per-trail position the scan carries and shares that axis with it, which is what
 lets a mismatched count fail as a shape rather than as an answer. The order is the
-order of the trails, which `EquilibriumStructure.origin_nodes` states; a shift moves a
+order of the trails, which `Structure.origin_nodes` states; a shift moves a
 trail down the sequences without reordering the trails, so alignment leaves it alone.
 `jax_fdm` restricts the same field the same way and names it for the subset it holds,
 `xyz_fixed`.
@@ -194,6 +194,107 @@ constructor. This follows `smax`, whose shipped containers are all-JAX and whose
 NumPy annotations appear only on construction helpers, and it matches the Formax
 contract. `jax_fdm` keeps key arrays as NumPy on the container; `jax_cem` does not
 follow it here.
+
+The rule cuts both ways, and a derived index that reads as a property is where it was
+being broken. `origin_nodes` searched the layout for the first node of every column
+with `jnp.argmax` and a gather on every read, while the trail search already had the
+same fact on the host and threw it away. It is stored now: 156 us per read became
+0.3 us, and both of its callers pull it back to the host anyway. What may stay derived
+is a view over stored fields, like `edges`, or a mask nothing can author, like
+`is_edge_deviation_direct`. What a NumPy pass already computed is stored.
+
+### The trails hold their sequences
+
+A structure holds `trails`, and the trails hold their `sequences`. The trails are the
+entity the CEM is about — the channels a force flows down — and a sequence is the step
+the computation takes across them, so the containment runs that way and not the other.
+
+```python
+class Trails(NamedTuple):
+    sequences:    Sequence               # every sequence, stacked
+    trail_edge_index: Int[Array, "edges_trail"]
+    origin_nodes: Int[Array, "trails"]
+```
+
+The sequences are **stacked arrays and not a collection of `Sequence`**. A scan slices
+a leading axis; a tuple of one container per sequence has nothing to slice, so the
+sweep would unroll. Measured on trail grids, against the 124 equations and 184 ms the
+scan compiles to at any size: 1 400 equations and 349 ms at 5 sequences, 5 210 and
+1 296 ms at 20, and 15 370 and 4 376 ms at 60. The answers are identical and the run
+time is a wash, since XLA flattens it either way, so what a collection costs is the
+graph and the compile.
+
+`Sequence` therefore does honest double duty. Its shapes describe one sequence, which
+is the view the scan presents to the step it drives, and `Trails.sequences` is that
+container with a leading sequence axis. It is the contract a stacked structure under
+`vmap` already carries.
+
+One name carries the bijection between slots and trail edges, in both directions.
+`Sequence.trail_edge_index` is keyed by a slot and holds the trail edge leaving it;
+`Trails.trail_edge_index` is keyed by the trail edge and holds the slot it occupies.
+The shared word is the entity the pair is about, and the container says which way it is
+being read. Both hold indices rather than endpoints, which an `edges` would not have
+said: `Structure.edges` holds node key pairs, so that word in two containers
+would have meant two things.
+
+Sharing the name puts the difference in the docstrings, which each state their key,
+their shape, and the direction. What keeps that from being a hazard is that the two
+cannot be confused silently: they differ in rank once the sequences are stacked, a grid
+against a flat array, and they can never hold the same number of entries, since a trail
+of `n` nodes fills `n` slots and owns `n - 1` edges. Substituting one for the other
+raises rather than answering.
+
+Two other pairs were tried. `trail_edge_of_slot` with `slot_of_trail_edge` spells both
+halves and cannot be misread, at the cost of length. `trail_edge_index` with
+`slot_index` names what each holds and leaves the key to the shape, but reads as the
+mapping that `node_index` and `edge_index` already are, in the opposite direction. The
+shared name reads as the duality it is, which is what a caller holding one of them is
+usually thinking about.
+
+The trail search and the layout stay separate functions, since only the second depends
+on the shifts and only the second runs again on alignment. `search_trails` finds the
+trails and returns their nodes; `build_trails` lays those out and returns the container.
+The ragged form is `trail_nodes` wherever it appears, including `read_trail_nodes`, so a
+bare **trails** always means the container.
+
+### Padding addresses nothing
+
+A trail that is shifted, or shorter than the tallest one, leaves slots of the sequence
+grid empty, and those slots are marked `-1`. The mark is a value in the layout, and it
+is not an index: `indices_beyond` sends it one past the end of whatever it would have
+addressed, where a scatter drops it and `gather_padded` fills it with zero.
+
+The alternative, which the kernel carried until it did not, is to let `-1` index. It is
+a valid index that wraps onto the last entry, so the node positions were allocated one
+row longer than the structure has nodes, the wrap landed there, and the row was sliced
+off again on the way out. That cost a slice everywhere the positions were read, put the
+same `[:-1]` token in one function with two meanings, and left the arrays that carry no
+dummy row — the lengths, the planes, the loads — silently reading their last real entry
+for a padded slot, correct only because a mask further down dropped it. The mask was
+derived from the node of a slot while the entry it protected was keyed by the edge, and
+those two disagree at the last node of a trail.
+
+What replaces it is narrower than a mask: a padded slot contributes zero because it
+reads zero, so the arithmetic it feeds carries it through rather than having to be told
+about it. The sentinel stays `-1` in the layout, where it reads as absence and tests as
+`< 0`, and stops being an index at the one place it was.
+
+### The iteration is a checkpointed while loop
+
+`equilibrium_iterative` runs on `equinox.internal.while_loop(kind="checkpointed")`,
+which is what `jax_fdm` iterates on as well. It is the only import the library takes
+from a private module of a dependency, and it stays because nothing public covers what
+it does: a bounded loop that exits as soon as the nodes stop moving and still
+differentiates in reverse, with memory logarithmic in the step count.
+
+Replacing it with `scan` is exact — the suite passes and the values and gradients are
+unchanged — and costs the early exit. Structures converge in one to sixteen iterations
+where `tmax` defaults to a hundred, so a fixed trip count pays several times over: on a
+four hundred node grid, five times the run time, seven times the gradient time, and
+forty times the peak memory of the gradient, growing linearly in `tmax` where the
+checkpointed loop grows logarithmically. Skipping the map with `lax.cond` recovers the
+run time and neither the memory nor anything under `vmap`, where the branch lowers to a
+select and both sides run.
 
 ### Batching goes through `vmap`
 
@@ -386,9 +487,9 @@ port moves to phase 6.
 jaxtyping shapes replace the `# N x 3` comments throughout. Every array a function
 takes or returns now states its shape, and the dimension names are shared across the
 package: `nodes`, `edges`, `edges_trail`, `edges_deviation`, `nodes_fixed`, `trails`,
-`sequences`, and `sequences_edges`. The padded node array the scan indexes with `-1`
-is `nodes_padded`, which is the one shape the kernel carries that the structure does
-not.
+`sequences`, and `sequences_edges`. Every shape the kernel carries is one the structure
+states, since the padded node array that phase carried, `nodes_padded`, went with the
+sentinel that indexed it.
 
 The shapes are verified rather than asserted. The root `conftest.py` installs
 jaxtyping's import hook with `beartype`, which turns every annotation into a runtime
@@ -406,7 +507,7 @@ conversion happens once, at the boundary between the search and the structure.
 
 `pyright` was already clean, which phase 1 reached by correcting the annotations that
 lied rather than by adding shapes: the model took the empty `Structure` base class
-where it reads `EquilibriumStructure` attributes, two `vmap`-ed parameters were
+where it reads `Structure` attributes, two `vmap`-ed parameters were
 declared `int` where they receive a traced scalar, and `node_index`, `edge_index`,
 `sequences_edges` and `sequences_edges_indices` were declared `jax.Array` where they
 hold dicts and NumPy arrays. This phase keeps it clean while adding the shapes.
@@ -477,6 +578,42 @@ A real `Unreleased` entry in `CHANGELOG.md`, including the note that
 `AUTHORS.md` and `CONTRIBUTING.md` cleared of COMPAS. A documentation site is
 deferred: `formax` and `smax` ship none, and the `mkdocs` and `mike` setup in
 `jax_fdm` is the template when one is wanted.
+
+
+### Phase 7 — Forward-mode differentiation
+
+An equilibrium differentiates in reverse and not forward. The sweep is not what blocks
+it: `lax.scan` transforms both ways, and a model at `tmax=1`, which skips the iteration,
+answers `jacfwd` and `jacrev` alike. The iteration is. A checkpointed while loop is a
+`custom_vjp`, and JAX refuses to apply a JVP to one, so `jacfwd` on a model that
+iterates raises instead of returning a tangent.
+
+Equinox answers this in one word. `kind="bounded"` differentiates both ways, and it
+lowers to a base-16 tree of `scan` whose levels are guarded by `cond` and rematerialized
+by `jax.checkpoint`, so it keeps both the early exit and the flat memory in `tmax`.
+It changes nothing about what a gradient means: the same exact derivative of the
+truncated iterate, agreeing with the checkpointed loop to the bit. It pays for the
+second direction in the first one, at 1.7 times the gradient time and 7 times its peak
+memory on a hundred node grid, and 8 times the memory on a four hundred node one. Under
+`vmap` its `cond` lowers to a select and the early exit goes with it, which is the one
+thing the checkpointed loop does that no scan-shaped loop can.
+
+So the phase is a settings question before it is a port. The loop kind can be a field of
+the model, defaulting to the checkpointed loop and switched where a forward derivative
+is wanted, since nothing else about the iteration differs between the two.
+
+A custom JVP rule on the fixed point is the alternative, and it is only worth writing if
+that memory is worth removing rather than paying. It has to be a JVP and not another VJP,
+because reverse mode is the transpose of a linearized forward rule and so falls out of
+the one rule where a `custom_vjp` only ever covers the one direction. Differentiating
+`x = f(a, x)` at the fixed point gives `(I - df/dx) dx = (df/da) da`, and the tangent
+solve has to be transposable for the reverse direction to survive it, which
+`lax.custom_linear_solve` is and a bare `lax.while_loop` is not. What to weigh is that
+such a rule changes what a gradient means. The checkpointed loop returns the exact
+derivative of the iterate it computed, truncation and all; an implicit rule returns the
+derivative of the converged fixed point. The two agree once the iteration has converged
+and part company silently when `tmax` cuts it short, by half a percent on a grid stopped
+at three of the ten steps it needed.
 
 
 ## Open questions

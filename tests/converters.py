@@ -15,8 +15,8 @@ from compas_cem.diagrams import FormDiagram
 from compas_cem.elements import Edge
 from compas_cem.elements import Node
 
-from jax_cem.datastructures import EquilibriumStructure
-from jax_cem.parameters import ParameterState
+from jax_cem.datastructures import Structure
+from jax_cem.parameters import Parameters
 
 
 def structure_from_topology(topology):
@@ -37,7 +37,7 @@ def structure_from_topology(topology):
 
     supports = sorted(trail[-1] for _, trail in topology.trails(True))
 
-    return EquilibriumStructure(
+    return Structure(
         nodes=nodes,
         supports=np.asarray(supports, dtype=int),
         edges_trail=np.asarray(edges_trail, dtype=int).reshape(-1, 2),
@@ -95,7 +95,7 @@ def parameters_from_topology(topology, structure):
                     raise ValueError(f"No length defined on trail edge {edge}")
                 lengths[index] = length
 
-    return ParameterState(
+    return Parameters(
         xyz_origin=xyz_origin,
         loads=loads,
         lengths=jnp.asarray(lengths),

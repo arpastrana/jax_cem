@@ -17,7 +17,7 @@ import jax.tree_util as jtu
 
 from jax_fdm.datastructures import FDNetwork
 from jax_fdm.equilibrium import EquilibriumModel as FDModel
-from jax_fdm.equilibrium import EquilibriumStructure as FDStructure
+from jax_fdm.equilibrium import Structure as FDStructure
 from jax_fdm.equilibrium import network_updated
 from jax_fdm.visualization import Plotter as PlotterFD
 

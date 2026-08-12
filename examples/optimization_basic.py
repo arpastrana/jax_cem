@@ -26,7 +26,7 @@ from compas_cem.equilibrium import static_equilibrium
 from compas_cem.plotters import Plotter
 
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.equilibrium import EquilibriumStructure
+from jax_cem.equilibrium import Structure
 
 from jax.tree_util import tree_map
 
@@ -126,7 +126,7 @@ topology.build_trails()
 
 form = static_equilibrium(topology)
 
-structure = EquilibriumStructure.from_topology_diagram(topology)
+structure = Structure.from_topology_diagram(topology)
 model = EquilibriumModel.from_topology_diagram(topology)
 eqstate = model(structure)
 

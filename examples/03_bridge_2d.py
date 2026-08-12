@@ -31,8 +31,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.datastructures import EquilibriumStructure
-from jax_cem.parameters import ParameterState
+from jax_cem.datastructures import Structure
+from jax_cem.parameters import Parameters
 
 # ------------------------------------------------------------------------------
 # Data
@@ -127,8 +127,8 @@ form_opt = opt.solve(topology=topology, algorithm="LBFGS", iters=100, eps=1e-6, 
 # JAX CEM - form finding
 # ------------------------------------------------------------------------------
 
-structure = EquilibriumStructure.from_topology_diagram(topology0)
-parameters = ParameterState.from_topology_diagram(topology0)
+structure = Structure.from_topology_diagram(topology0)
+parameters = Parameters.from_topology_diagram(topology0)
 model = EquilibriumModel(tmax=100, verbose=True)
 eqstate = model(parameters, structure)
 
@@ -145,7 +145,7 @@ def combine_parameters(theta):
     """
     lengths, forces = theta
 
-    return ParameterState(
+    return Parameters(
         lengths=lengths,
         forces=forces,
         xyz=parameters.xyz,

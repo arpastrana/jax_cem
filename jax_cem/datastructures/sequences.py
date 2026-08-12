@@ -1,5 +1,5 @@
 """
-The sequences the equilibrium scan steps through, and what their layout settles.
+The sequences an equilibrium steps through, and what sharing one settles.
 """
 
 from typing import TYPE_CHECKING
@@ -11,66 +11,55 @@ from jaxtyping import Array
 from jaxtyping import Bool
 from jaxtyping import Int
 
+from jax_cem.datastructures.indexing import indices_beyond
+
 if TYPE_CHECKING:
-    from jax_cem.datastructures.structures import EquilibriumStructure
+    from jax_cem.datastructures.structures import Structure
 
 __all__ = [
-    "Sequences",
-    "build_sequences",
+    "Sequence",
     "is_edge_deviation_direct",
     "sequences_from_trails",
 ]
 
 
-class Sequences(NamedTuple):
+class Sequence(NamedTuple):
     """
-    The layout of the trails of a structure into the sequences it steps through.
+    One sequence of a structure, which an equilibrium steps through in one step.
 
     Attributes
     ----------
     nodes :
-        The node key at each sequence of each trail, where ``-1`` marks a
-        sequence that a shifted or shorter trail does not reach.
-    edges :
-        The trail edge outgoing from the node at each sequence of each trail,
-        where ``-1`` marks a slot that no trail edge leaves.
-    edges_slot :
-        The slot of the layout that each trail edge occupies, counted along the
-        flattened sequence pairs.
+        The node key of every trail in the sequence, where ``-1`` marks a trail
+        that does not reach it.
+    trail_edge_index :
+        The trail edge outgoing from every one of those nodes, where ``-1`` marks
+        a node that none leaves.
 
     Notes
     -----
-    A shift changes all of this at once, so it is held together rather than as
-    loose fields of a structure, which no longer have to be replaced in step.
+    Both fields are keyed by slot and hold the entity they name: a slot is one node
+    of one trail, and the trail edge that leaves it. `Trails` carries a field of the
+    same name keyed the other way round, by the trail edge, holding the slot it
+    occupies; the shapes tell them apart, `"trails"` here against `"edges_trail"`
+    there, and so does the rank once these are stacked into a grid.
 
-    A trail edge joins the node a trail holds in one sequence to the node it
-    holds in the next, so the pairs of consecutive sequences carry one slot per
-    trail, and a trail that does not span a pair leaves its slot empty. The
-    occupied slots are in bijection with the trail edges, which is what lets a
-    quantity computed over the layout be read back in edge order by one gather.
+    A trail edge joins the node a trail holds in one sequence to the node it holds
+    in the next, so a trail of ``n`` nodes has ``n - 1`` edges and its last slot
+    holds a node that no edge leaves. That slot is padded here and not in `nodes`,
+    which is why a mask read off one does not speak for the other.
 
-    `edges` and `edges_slot` are the two directions of that bijection. The first
-    is row-aligned with `nodes`, so the scan reads the node of a slot and the edge
-    that leaves it together, and its last row is empty because the last sequence a
-    trail reaches holds its support.
+    The shapes describe one sequence, which is the view a scan presents to the
+    step it drives. `Trails.sequences` stacks every sequence into the same
+    container, which is what the scan is handed.
     """
 
-    nodes: Int[Array, "sequences trails"]
-    edges: Int[Array, "sequences trails"]
-    edges_slot: Int[Array, "edges_trail"]
-
-    @property
-    def origin_nodes(self) -> Int[Array, "trails"]:
-        """
-        The first node of each trail, column-aligned with the sequences.
-        """
-        first = jnp.argmax(self.nodes >= 0, axis=0)
-
-        return self.nodes[first, jnp.arange(self.nodes.shape[-1])]
+    nodes: Int[Array, "trails"]
+    trail_edge_index: Int[Array, "trails"]
 
 
 def is_edge_deviation_direct(
-    structure: "EquilibriumStructure",
+    structure: "Structure",
 ) -> Bool[Array, "edges_deviation"]:
     """
     Mask the deviation edges of a structure whose two nodes share a sequence.
@@ -92,91 +81,23 @@ def is_edge_deviation_direct(
     is computed rather than stored, and it cannot fall out of step with a trail
     that shifts.
     """
-    sequences = structure.sequences.nodes
+    sequences = structure.trails.sequences.nodes
     rows = jnp.broadcast_to(
         jnp.arange(structure.num_sequences)[:, None],
         sequences.shape,
     )
 
-    # a padded sequence entry is -1, which lands on the extra last slot
-    sequence_of = jnp.full(structure.num_nodes + 1, -1, dtype=int)
-    sequence_of = sequence_of.at[sequences].set(rows)[:-1]
+    nodes = indices_beyond(sequences, structure.num_nodes)
+    sequence_of = jnp.full(structure.num_nodes, -1, dtype=int)
+    sequence_of = sequence_of.at[nodes].set(rows, mode="drop")
 
     nodes_u, nodes_v = structure.edges_deviation[:, 0], structure.edges_deviation[:, 1]
 
     return sequence_of[nodes_u] == sequence_of[nodes_v]
 
 
-def build_sequences(
-    trails: list[tuple[int, ...]],
-    edges: Int[np.ndarray, "edges 2"],
-    shifts: Int[np.ndarray, "trails"] | None = None,
-) -> Sequences:
-    """
-    Lay out a set of trails into the sequences an equilibrium steps through.
-
-    Parameters
-    ----------
-    trails :
-        One tuple of node keys per trail, running from origin to support.
-    edges :
-        The node key pair of each edge, trail edges first.
-    shifts :
-        The sequence each trail starts at. Defaults to every trail starting at
-        the first sequence.
-
-    Returns
-    -------
-    sequences :
-        The layout of the trails.
-
-    Notes
-    -----
-    The slot each trail edge occupies is inverted from the map that reads an edge
-    off a slot, so that the caller gathers in edge order rather than scattering
-    into it. Both directions of the map are kept, since the equilibrium reads a
-    length off a slot and its forces back off an edge.
-
-    The map is padded with an empty row to the height of the sequences, so that
-    the scan steps over the nodes and the edges of a sequence together.
-
-    The index data is computed with NumPy and converted once here, so what the
-    structure stores is device-resident.
-    """
-    nodes, _ = sequences_from_trails(trails, shifts)
-
-    edge_index = {}
-    for index, (u, v) in enumerate(edges):
-        edge_index[(int(u), int(v))] = index
-
-    edge_of_slot = []
-    for pair in zip(nodes[:-1], nodes[1:], strict=True):
-        for edge in zip(*pair, strict=True):
-            u, v = int(edge[0]), int(edge[1])
-            edge_of_slot.append(edge_index.get((u, v), edge_index.get((v, u), -1)))
-    edge_of_slot = np.asarray(edge_of_slot, dtype=int)
-
-    slots = np.flatnonzero(edge_of_slot >= 0)
-    edges_slot = np.full(slots.size, -1, dtype=int)
-    edges_slot[edge_of_slot[slots]] = slots
-
-    # an occupied slot per trail edge, so the inversion leaves nothing behind
-    if np.any(edges_slot < 0):
-        raise ValueError("Every trail edge must occupy exactly one sequence slot")
-
-    grid = edge_of_slot.reshape(nodes.shape[0] - 1, -1)
-    empty = np.full((1, nodes.shape[-1]), -1, dtype=int)
-    edges_sequences = np.concatenate((grid, empty))
-
-    return Sequences(
-        nodes=jnp.asarray(nodes),
-        edges=jnp.asarray(edges_sequences),
-        edges_slot=jnp.asarray(edges_slot),
-    )
-
-
 def sequences_from_trails(
-    trails: list[tuple[int, ...]],
+    trail_nodes: list[tuple[int, ...]],
     shifts: Int[np.ndarray, "trails"] | None = None,
 ) -> tuple[Int[np.ndarray, "sequences trails"], Int[np.ndarray, "trails"]]:
     """
@@ -184,7 +105,7 @@ def sequences_from_trails(
 
     Parameters
     ----------
-    trails :
+    trail_nodes :
         One tuple of node keys per trail, running from origin to support.
     shifts :
         The sequence each trail starts at. Defaults to every trail starting at
@@ -205,23 +126,23 @@ def sequences_from_trails(
     late because they are shifted, leave the padding value behind.
     """
     if shifts is None:
-        shifts = np.zeros(len(trails), dtype=int)
-    if len(shifts) != len(trails):
+        shifts = np.zeros(len(trail_nodes), dtype=int)
+    if len(shifts) != len(trail_nodes):
         raise ValueError(
-            f"Got {len(shifts)} shifts for {len(trails)} trails; they must match",
+            f"Got {len(shifts)} shifts for {len(trail_nodes)} trails; they must match",
         )
     if np.any(np.asarray(shifts) < 0):
         raise ValueError("A trail cannot start before the first sequence")
 
     num_sequences = max(
-        shift + len(trail) for shift, trail in zip(shifts, trails, strict=True)
+        shift + len(trail) for shift, trail in zip(shifts, trail_nodes, strict=True)
     )
 
-    sequences = np.full((num_sequences, len(trails)), -1, dtype=int)
-    for index, (shift, trail) in enumerate(zip(shifts, trails, strict=True)):
+    sequences = np.full((num_sequences, len(trail_nodes)), -1, dtype=int)
+    for index, (shift, trail) in enumerate(zip(shifts, trail_nodes, strict=True)):
         for offset, node in enumerate(trail):
             sequences[shift + offset][index] = node
 
-    origin_nodes = np.asarray([trail[0] for trail in trails], dtype=int)
+    origin_nodes = np.asarray([trail[0] for trail in trail_nodes], dtype=int)
 
     return sequences, origin_nodes

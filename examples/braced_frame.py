@@ -13,8 +13,8 @@ from compas_cem.loads import NodeLoad
 from compas_cem.plotters import Plotter
 
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.datastructures import EquilibriumStructure
-from jax_cem.parameters import ParameterState
+from jax_cem.datastructures import Structure
+from jax_cem.parameters import Parameters
 
 import jax.numpy as jnp
 
@@ -121,8 +121,8 @@ topology.build_trails(auxiliary_trails=True)
 # Compute a state of static equilibrium with JAX CEM
 # ------------------------------------------------------------------------------
 
-structure = EquilibriumStructure.from_topology_diagram(topology)
-parameters = ParameterState.from_topology_diagram(topology)
+structure = Structure.from_topology_diagram(topology)
+parameters = Parameters.from_topology_diagram(topology)
 model = EquilibriumModel(tmax=TMAX, eta=ETA, verbose=True)
 
 eqstate = model(parameters, structure)
@@ -165,7 +165,7 @@ if OPTIMIZE:
         else:
             xyz = parameters.xyz
 
-        return ParameterState(
+        return Parameters(
             xyz=xyz,
             loads=parameters.loads,
             forces=forces,

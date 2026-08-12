@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from jaxtyping import TypeCheckError
 
-from jax_cem.datastructures import EquilibriumStructure
+from jax_cem.datastructures import Structure
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.parameters import ParameterState
+from jax_cem.parameters import Parameters
 
 # ==============================================================================
 # Helpers
@@ -17,7 +17,7 @@ def chain(edges_deviation):
     """
     A four node chain hanging from one support, braced by one deviation edge.
     """
-    return EquilibriumStructure(
+    return Structure(
         nodes=np.arange(4),
         supports=np.array([3]),
         edges_trail=np.array([[0, 1], [1, 2], [2, 3]]),
@@ -29,7 +29,7 @@ def parameters(force):
     """
     The parameters of a four node chain, with one force on the deviation edge.
     """
-    return ParameterState(
+    return Parameters(
         xyz_origin=jnp.zeros((1, 3)),
         loads=jnp.tile(jnp.array([0.0, -1.0, 0.0]), (4, 1)),
         forces=jnp.array([force]),
@@ -163,7 +163,7 @@ def test_the_constructor_rejects_a_batched_edge_array():
     what a caller without the hook meets.
     """
     with pytest.raises((TypeCheckError, ValueError)):
-        EquilibriumStructure(
+        Structure(
             nodes=np.arange(4),
             supports=np.array([3]),
             edges_trail=np.stack([np.array([[0, 1], [1, 2], [2, 3]])] * 2),

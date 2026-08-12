@@ -2,11 +2,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from jax_cem.datastructures import EquilibriumStructure
+from jax_cem.datastructures import Structure
 from jax_cem.datastructures import is_edge_deviation_direct
 from jax_cem.equilibrium import EquilibriumModel
 from jax_cem.equilibrium.models import nodes_deviation
-from jax_cem.parameters import ParameterState
+from jax_cem.parameters import Parameters
 
 # ==============================================================================
 # Helpers
@@ -17,7 +17,7 @@ def two_trails():
     """
     Two one-edge trails, their origin nodes joined by one deviation edge.
     """
-    return EquilibriumStructure(
+    return Structure(
         nodes=np.arange(4),
         supports=np.array([1, 3]),
         edges_trail=np.array([[0, 1], [2, 3]]),
@@ -29,7 +29,7 @@ def uneven_trails():
     """
     A two-edge trail beside a one-edge trail, which pads the sequences.
     """
-    return EquilibriumStructure(
+    return Structure(
         nodes=np.arange(5),
         supports=np.array([2, 4]),
         edges_trail=np.array([[0, 1], [1, 2], [3, 4]]),
@@ -41,7 +41,7 @@ def crossing_trails():
     """
     Uneven trails joined by one direct and one indirect deviation edge.
     """
-    return EquilibriumStructure(
+    return Structure(
         nodes=np.arange(5),
         supports=np.array([2, 4]),
         edges_trail=np.array([[0, 1], [1, 2], [3, 4]]),
@@ -65,7 +65,7 @@ def parameters(structure):
     xyz_origin = np.zeros((num_trails, 3))
     xyz_origin[:, 0] = np.arange(num_trails)
 
-    return ParameterState(
+    return Parameters(
         xyz_origin=jnp.asarray(xyz_origin),
         loads=jnp.tile(jnp.array([0.0, -1.0, 0.0]), (num_nodes, 1)),
         forces=jnp.full(int(structure.num_edges_deviation), 0.5),
@@ -187,6 +187,32 @@ def test_the_origin_positions_land_on_the_origin_nodes(build):
 # ==============================================================================
 
 
+def test_an_empty_slot_of_the_layout_takes_no_length():
+    """
+    A slot that no trail edge leaves stretches nothing.
+
+    Notes
+    -----
+    Every trail edge here is a unit length, so a slot that read one by addressing
+    an edge it does not own would report that length rather than nothing. The
+    empty slots outnumber the padded nodes, since the last node of a trail holds a
+    slot that no edge leaves.
+    """
+    structure = uneven_trails()
+    is_empty = np.asarray(structure.trails.sequences.trail_edge_index) < 0
+    assert np.any(is_empty), "no empty slot to exercise"
+
+    xyz = jnp.zeros((int(structure.num_nodes), 3))
+    trails_state = EquilibriumModel().trails_equilibrium(
+        parameters(structure),
+        structure,
+        xyz,
+        use_indirect=False,
+    )
+
+    assert np.allclose(np.asarray(trails_state.lengths)[is_empty], 0.0)
+
+
 def test_a_padded_sequence_still_builds_every_trail_edge():
     """
     Trails of unequal length pad the sequences, which must not reach the result.
@@ -198,10 +224,14 @@ def test_a_padded_sequence_still_builds_every_trail_edge():
     edge rather than leave the result untouched.
     """
     structure = uneven_trails()
-    assert np.any(np.asarray(structure.sequences.nodes) < 0), "no padding to exercise"
-    assert np.any(np.asarray(structure.sequences.edges) < 0), "no empty slot"
+    assert np.any(np.asarray(structure.trails.sequences.nodes) < 0), (
+        "no padding to exercise"
+    )
+    assert np.any(np.asarray(structure.trails.sequences.trail_edge_index) < 0), (
+        "no empty slot"
+    )
 
-    params = ParameterState(
+    params = Parameters(
         xyz_origin=jnp.zeros((2, 3)),
         loads=jnp.tile(jnp.array([0.0, -1.0, 0.0]), (5, 1)),
         forces=jnp.array([0.5]),
@@ -229,7 +259,7 @@ def test_an_edge_that_misses_a_node_is_rejected(far):
     A key outside the nodes would wrap or drop silently in the accumulation.
     """
     with pytest.raises(ValueError, match="index existing nodes"):
-        EquilibriumStructure(
+        Structure(
             nodes=np.arange(2),
             supports=np.array([1]),
             edges_trail=np.array([[0, 1]]),

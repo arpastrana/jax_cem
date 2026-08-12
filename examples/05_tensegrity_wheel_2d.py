@@ -36,8 +36,8 @@ import jax.tree_util as jtu
 import numpy as np
 
 from jax_cem.equilibrium import EquilibriumModel
-from jax_cem.datastructures import EquilibriumStructure
-from jax_cem.parameters import ParameterState
+from jax_cem.datastructures import Structure
+from jax_cem.parameters import Parameters
 
 # ------------------------------------------------------------------------------
 # Create a topology diagram
@@ -117,8 +117,8 @@ form_opt = opt.solve(topology, algorithm="LBFGS", grad=grad_method, verbose=True
 # JAX CEM - form finding
 # ------------------------------------------------------------------------------
 
-structure = EquilibriumStructure.from_topology_diagram(topology0)
-parameters = ParameterState.from_topology_diagram(topology0)
+structure = Structure.from_topology_diagram(topology0)
+parameters = Parameters.from_topology_diagram(topology0)
 model = EquilibriumModel(tmax=1)
 eqstate = model(parameters, structure)
 

@@ -4,12 +4,11 @@ import numpy as np
 from jaxtyping import Array
 from jaxtyping import Int
 
-from jax_cem.datastructures.sequences import Sequences
-from jax_cem.datastructures.sequences import build_sequences
+from jax_cem.datastructures.trails import Trails
 from jax_cem.datastructures.trails import build_trails
+from jax_cem.datastructures.trails import search_trails
 
 __all__ = [
-    "EquilibriumStructure",
     "Structure",
 ]
 
@@ -19,10 +18,6 @@ __all__ = [
 
 
 class Structure(eqx.Module):
-    pass
-
-
-class EquilibriumStructure(Structure):
     """
     The attributed, undirected graph describing a pin-jointed bar structure.
 
@@ -34,7 +29,7 @@ class EquilibriumStructure(Structure):
     every per-edge parameter follows.
 
     The trail search runs in the constructor, so a structure is either laid out
-    into sequences or it does not exist.
+    into trails and sequences or it does not exist.
     """
 
     nodes: Int[Array, "nodes"]
@@ -42,7 +37,7 @@ class EquilibriumStructure(Structure):
     edges_trail: Int[Array, "edges_trail 2"]
     edges_deviation: Int[Array, "edges_deviation 2"]
 
-    sequences: Sequences
+    trails: Trails
 
     def __init__(
         self,
@@ -51,24 +46,16 @@ class EquilibriumStructure(Structure):
         edges_trail: Int[np.ndarray, "edges_trail 2"],
         edges_deviation: Int[np.ndarray, "edges_deviation 2"],
     ):
-        nodes = np.asarray(nodes)
-        supports = np.asarray(supports)
-        edges_trail = np.asarray(edges_trail)
-        edges_deviation = np.asarray(edges_deviation)
-
         if edges_trail.ndim != 2 or edges_deviation.ndim != 2:
             raise ValueError("Edges must be given as an array of node key pairs")
 
-        edges = np.concatenate((edges_trail, edges_deviation))
-
-        trails = build_trails(nodes, supports, edges_trail)
+        trail_nodes = search_trails(nodes, supports, edges_trail)
 
         self.nodes = jnp.asarray(nodes)
         self.supports = jnp.asarray(supports)
         self.edges_trail = jnp.asarray(edges_trail)
         self.edges_deviation = jnp.asarray(edges_deviation)
-
-        self.sequences = build_sequences(trails, edges)
+        self.trails = build_trails(trail_nodes, edges_trail)
 
     def __check_init__(self):
         """
@@ -82,6 +69,15 @@ class EquilibriumStructure(Structure):
         # a negative key would otherwise wrap, and the scatter would drop the edge
         if np.any((edges < 0) | (edges >= self.num_nodes)):
             raise ValueError("Edges must index existing nodes")
+
+        # a repeated pair collapses in the edge index, which is keyed by it
+        pairs, counts = np.unique(np.sort(edges, axis=1), axis=0, return_counts=True)
+        repeated = pairs[counts > 1]
+        if repeated.size > 0:
+            raise ValueError(
+                f"Node pairs {repeated.tolist()} carry more than one edge; two "
+                f"nodes are joined once, by a trail edge or by a deviation edge",
+            )
 
         if self.supports.shape[-1] != self.num_trails:
             raise ValueError(
@@ -106,9 +102,9 @@ class EquilibriumStructure(Structure):
     @property
     def origin_nodes(self) -> Int[Array, "trails"]:
         """
-        The first node of each trail, column-aligned with the sequences.
+        The first node of each trail, as the layout states it.
         """
-        return self.sequences.origin_nodes
+        return self.trails.origin_nodes
 
     @property
     def node_index(self) -> dict[int, int]:
@@ -116,8 +112,9 @@ class EquilibriumStructure(Structure):
         A dictionary between node keys and their enumeration indices.
         """
         nodes = np.asarray(self.nodes)
+        node_index = {int(node): index for index, node in enumerate(nodes)}
 
-        return {int(node): index for index, node in enumerate(nodes)}
+        return node_index
 
     @property
     def edge_index(self) -> dict[tuple[int, int], int]:
@@ -125,8 +122,9 @@ class EquilibriumStructure(Structure):
         A dictionary between edge keys and their enumeration indices.
         """
         edges = np.asarray(self.edges)
+        edge_index = {(int(u), int(v)): index for index, (u, v) in enumerate(edges)}
 
-        return {(int(u), int(v)): index for index, (u, v) in enumerate(edges)}
+        return edge_index
 
     # --------------------------------------------------------------------------
     # Counts
@@ -165,11 +163,11 @@ class EquilibriumStructure(Structure):
         """
         The number of trails.
         """
-        return self.sequences.nodes.shape[-1]
+        return self.trails.sequences.nodes.shape[-1]
 
     @property
     def num_sequences(self) -> int:
         """
         The number of sequences.
         """
-        return self.sequences.nodes.shape[-2]
+        return self.trails.sequences.nodes.shape[-2]
